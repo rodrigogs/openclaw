@@ -103,7 +103,7 @@ export function applyGroupGating(params: {
     sessionKey: params.sessionKey,
     conversationId: params.conversationId,
   });
-  
+
   // Check if this message is a reply to the bot
   const selfJid = params.msg.selfJid?.replace(/:\\d+/, "");
   const replySenderJid = params.msg.replyToSenderJid?.replace(/:\\d+/, "");
@@ -115,17 +115,18 @@ export function applyGroupGating(params: {
     (selfJid && replySenderJid && selfJid === replySenderJid) ||
     (selfE164 && replySenderE164 && selfE164 === replySenderE164),
   );
-  
+
   // Determine if we should process based on activation mode
   const shouldProcess = (() => {
     if (activation === "always") return true;
     if (activation === "never") return shouldBypassMention;
     if (activation === "replies") return isReplyToBot || shouldBypassMention;
-    if (activation === "mention+replies") return wasMentioned || isReplyToBot || shouldBypassMention;
+    if (activation === "mention+replies")
+      return wasMentioned || isReplyToBot || shouldBypassMention;
     // Default to "mention" mode
     return wasMentioned || shouldBypassMention;
   })();
-  
+
   const requireMention = activation !== "always" && activation !== "replies";
   const mentionGate = resolveMentionGating({
     requireMention,
@@ -135,7 +136,7 @@ export function applyGroupGating(params: {
     shouldBypassMention,
   });
   params.msg.wasMentioned = mentionGate.effectiveWasMentioned;
-  
+
   if (!shouldProcess) {
     params.logVerbose(
       `Group message stored for context (no mention detected) in ${params.conversationId}: ${params.msg.body}`,
