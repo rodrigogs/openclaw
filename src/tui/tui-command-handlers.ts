@@ -407,7 +407,7 @@ export function createCommandHandlers(context: CommandHandlerContext) {
         break;
       case "activation":
         if (!args) {
-          chatLog.addSystem("usage: /activation <mention|always>");
+          chatLog.addSystem("usage: /activation <mention|always|replies|mention+replies|never>");
           break;
         }
         try {
