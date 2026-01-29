@@ -116,30 +116,34 @@ export function applyGroupGating(params: {
     (selfE164 && replySenderE164 && selfE164 === replySenderE164),
   );
 
+  // Ensure safe default for shouldBypassMention in case it's undefined in some contexts
+  const safeShouldBypassMention = typeof shouldBypassMention !== "undefined" ? shouldBypassMention : false;
+
   // Determine if we should process based on activation mode
   const shouldProcess = (() => {
     if (activation === "always") return true;
-    if (activation === "never") return shouldBypassMention;
-    if (activation === "replies") return isReplyToBot || shouldBypassMention;
+    if (activation === "never") return safeShouldBypassMention;
+    if (activation === "replies") return isReplyToBot || safeShouldBypassMention;
     if (activation === "mention+replies")
-      return wasMentioned || isReplyToBot || shouldBypassMention;
+      return wasMentioned || isReplyToBot || safeShouldBypassMention;
     // Default to "mention" mode
-    return wasMentioned || shouldBypassMention;
+    return wasMentioned || safeShouldBypassMention;
   })();
 
-  const requireMention = activation !== "always" && activation !== "replies";
+  // require mention only in strict 'mention' mode
+  const requireMention = activation === "mention";
   const mentionGate = resolveMentionGating({
     requireMention,
     canDetectMention: true,
     wasMentioned,
-    implicitMention: isReplyToBot,
-    shouldBypassMention,
+    implicitMention: isReplyToBot, // treat reply-to-bot as an implicit mention
+    shouldBypassMention: safeShouldBypassMention,
   });
   params.msg.wasMentioned = mentionGate.effectiveWasMentioned;
 
   if (!shouldProcess) {
     params.logVerbose(
-      `Group message stored for context (no mention detected) in ${params.conversationId}: ${params.msg.body}`,
+      `Group message stored for context (no activation pass) in ${params.conversationId}: ${params.msg.body}`,
     );
     const sender =
       params.msg.senderName && params.msg.senderE164
