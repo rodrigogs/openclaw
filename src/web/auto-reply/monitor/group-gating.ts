@@ -126,29 +126,50 @@ export function applyGroupGating(params: ApplyGroupGatingParams) {
     sessionKey: params.sessionKey,
     conversationId: params.conversationId,
   });
-  const requireMention = activation !== "always";
+
+  // Check if this message is a reply to the bot
   const selfJid = params.msg.selfJid?.replace(/:\\d+/, "");
   const replySenderJid = params.msg.replyToSenderJid?.replace(/:\\d+/, "");
   const selfE164 = params.msg.selfE164 ? normalizeE164(params.msg.selfE164) : null;
   const replySenderE164 = params.msg.replyToSenderE164
     ? normalizeE164(params.msg.replyToSenderE164)
     : null;
-  const implicitMention = Boolean(
+  const isReplyToBot = Boolean(
     (selfJid && replySenderJid && selfJid === replySenderJid) ||
     (selfE164 && replySenderE164 && selfE164 === replySenderE164),
   );
+
+  // Determine if we should process based on activation mode
+  const shouldProcess = (() => {
+    if (activation === "always") {
+      return true;
+    }
+    if (activation === "never") {
+      return shouldBypassMention;
+    }
+    if (activation === "replies") {
+      return isReplyToBot || shouldBypassMention;
+    }
+    if (activation === "mention+replies") {
+      return wasMentioned || isReplyToBot || shouldBypassMention;
+    }
+    // Default to "mention" mode
+    return wasMentioned || shouldBypassMention;
+  })();
+
+  const requireMention = activation !== "always" && activation !== "replies";
   const mentionGate = resolveMentionGating({
     requireMention,
     canDetectMention: true,
     wasMentioned,
-    implicitMention,
+    implicitMention: isReplyToBot,
     shouldBypassMention,
   });
   params.msg.wasMentioned = mentionGate.effectiveWasMentioned;
-  if (!shouldBypassMention && requireMention && mentionGate.shouldSkip) {
+  if (!shouldProcess) {
     return skipGroupMessageAndStoreHistory(
       params,
-      `Group message stored for context (no mention detected) in ${params.conversationId}: ${params.msg.body}`,
+      `Group message stored for context (no mention/reply detected) in ${params.conversationId}: ${params.msg.body}`,
     );
   }
 
