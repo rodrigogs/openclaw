@@ -117,7 +117,8 @@ export function applyGroupGating(params: {
   );
 
   // Ensure safe default for shouldBypassMention in case it's undefined in some contexts
-  const safeShouldBypassMention = typeof shouldBypassMention !== "undefined" ? shouldBypassMention : false;
+  const safeShouldBypassMention =
+    typeof shouldBypassMention !== "undefined" ? shouldBypassMention : false;
 
   // Determine if we should process based on activation mode
   const shouldProcess = (() => {
