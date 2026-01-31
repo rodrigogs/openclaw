@@ -1,0 +1,27 @@
+{
+  "id": "memory-qdrant",
+  "kind": "memory",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "vaultPath": { "type": "string" },
+      "workspacePath": { "type": "string" },
+      "qdrantUrl": { "type": "string" },
+      "collection": { "type": "string" },
+      "ollamaUrl": { "type": "string" },
+      "embeddingModel": { "type": "string" },
+      "autoIndex": { "type": "boolean" },
+      "extraPaths": { "type": "array", "items": { "type": "string" } },
+      "autoRecall": { "type": "boolean" },
+      "autoRecallLimit": { "type": "number" },
+      "autoRecallMinScore": { "type": "number" },
+      "autoCapture": { "type": "boolean" },
+      "autoCaptureMax": { "type": "number" },
+      "autoCaptureDupThreshold": { "type": "number" },
+      "autoCaptureWindowMs": { "type": "number" },
+      "autoCaptureMaxPerWindow": { "type": "number" }
+    },
+    "required": ["vaultPath"]
+  }
+}

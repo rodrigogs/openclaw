@@ -1,0 +1,13 @@
+{
+  "name": "@openclaw/memory-qdrant",
+  "version": "2026.1.30",
+  "type": "module",
+  "description": "OpenClaw Qdrant-backed local memory plugin with Obsidian vault + Ollama embeddings",
+  "dependencies": {
+    "@sinclair/typebox": "0.34.47",
+    "chokidar": "^4.0.3"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.1.26"
+  }
+}
