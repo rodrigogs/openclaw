@@ -117,8 +117,8 @@ export function applyGroupGating(params: {
   );
 
   // Debug reply detection
-  params.logVerbose(
-    `Reply detection: selfJid=${selfJid}, replySenderJid=${replySenderJid}, selfE164=${selfE164}, replySenderE164=${replySenderE164}, isReplyToBot=${isReplyToBot}`,
+  console.log(
+    `[DEBUG] Reply detection: selfJid=${selfJid}, replySenderJid=${replySenderJid}, selfE164=${selfE164}, replySenderE164=${replySenderE164}, isReplyToBot=${isReplyToBot}, activation=${activation}`,
   );
 
   // Owner control commands bypass activation restrictions
