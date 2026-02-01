@@ -116,6 +116,11 @@ export function applyGroupGating(params: {
     (selfE164 && replySenderE164 && selfE164 === replySenderE164),
   );
 
+  // Debug reply detection
+  params.logVerbose(
+    `Reply detection: selfJid=${selfJid}, replySenderJid=${replySenderJid}, selfE164=${selfE164}, replySenderE164=${replySenderE164}, isReplyToBot=${isReplyToBot}`,
+  );
+
   // Owner control commands bypass activation restrictions
   const bypassMention = shouldBypassMention === true;
 
