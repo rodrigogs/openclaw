@@ -117,6 +117,7 @@ export function applyGroupGating(params: {
   };
 
   const selfPhone = extractPhoneFromJid(params.msg.selfJid);
+  const selfLidPhone = extractPhoneFromJid(params.msg.selfLid);
   const replyPhone = extractPhoneFromJid(params.msg.replyToSenderJid);
   const selfE164 = params.msg.selfE164 ? normalizeE164(params.msg.selfE164) : null;
   const replySenderE164 = params.msg.replyToSenderE164
@@ -125,12 +126,13 @@ export function applyGroupGating(params: {
 
   const isReplyToBot = Boolean(
     (selfPhone && replyPhone && selfPhone === replyPhone) ||
+    (selfLidPhone && replyPhone && selfLidPhone === replyPhone) ||
     (selfE164 && replySenderE164 && selfE164 === replySenderE164),
   );
 
   // Debug reply detection
   console.log(
-    `[DEBUG] Reply detection: selfPhone=${selfPhone}, replyPhone=${replyPhone}, selfE164=${selfE164}, replySenderE164=${replySenderE164}, isReplyToBot=${isReplyToBot}, activation=${activation}`,
+    `[DEBUG] Reply detection: selfPhone=${selfPhone}, selfLidPhone=${selfLidPhone}, replyPhone=${replyPhone}, isReplyToBot=${isReplyToBot}, activation=${activation}`,
   );
 
   // Owner control commands bypass activation restrictions
