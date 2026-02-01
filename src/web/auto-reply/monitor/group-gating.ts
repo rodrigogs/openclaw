@@ -43,10 +43,6 @@ export function applyGroupGating(params: {
   logVerbose: (msg: string) => void;
   replyLogger: { debug: (obj: unknown, msg: string) => void };
 }) {
-  console.log(
-    `[DEBUG] applyGroupGating called for group ${params.conversationId}, body: "${params.msg.body}"`,
-  );
-
   const groupPolicy = resolveGroupPolicyFor(params.cfg, params.conversationId);
   if (groupPolicy.allowlistEnabled && !groupPolicy.allowed) {
     params.logVerbose(`Skipping group message ${params.conversationId} (not in allowlist)`);
@@ -128,11 +124,6 @@ export function applyGroupGating(params: {
     (selfPhone && replyPhone && selfPhone === replyPhone) ||
     (selfLidPhone && replyPhone && selfLidPhone === replyPhone) ||
     (selfE164 && replySenderE164 && selfE164 === replySenderE164),
-  );
-
-  // Debug reply detection
-  console.log(
-    `[DEBUG] Reply detection: selfPhone=${selfPhone}, selfLidPhone=${selfLidPhone}, replyPhone=${replyPhone}, isReplyToBot=${isReplyToBot}, activation=${activation}`,
   );
 
   // Owner control commands bypass activation restrictions
