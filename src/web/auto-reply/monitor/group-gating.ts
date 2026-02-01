@@ -109,20 +109,28 @@ export function applyGroupGating(params: {
   });
 
   // Check if this message is a reply to the bot
-  const selfJid = params.msg.selfJid?.replace(/:\d+/, "");
-  const replySenderJid = params.msg.replyToSenderJid?.replace(/:\d+/, "");
+  // Extract phone number from JID (works with @s.whatsapp.net and @lid formats)
+  const extractPhoneFromJid = (jid?: string | null): string | null => {
+    if (!jid) return null;
+    const match = jid.match(/^(\d+)/);
+    return match ? match[1] : null;
+  };
+
+  const selfPhone = extractPhoneFromJid(params.msg.selfJid);
+  const replyPhone = extractPhoneFromJid(params.msg.replyToSenderJid);
   const selfE164 = params.msg.selfE164 ? normalizeE164(params.msg.selfE164) : null;
   const replySenderE164 = params.msg.replyToSenderE164
     ? normalizeE164(params.msg.replyToSenderE164)
     : null;
+
   const isReplyToBot = Boolean(
-    (selfJid && replySenderJid && selfJid === replySenderJid) ||
+    (selfPhone && replyPhone && selfPhone === replyPhone) ||
     (selfE164 && replySenderE164 && selfE164 === replySenderE164),
   );
 
   // Debug reply detection
   console.log(
-    `[DEBUG] Reply detection: selfJid=${selfJid}, replySenderJid=${replySenderJid}, selfE164=${selfE164}, replySenderE164=${replySenderE164}, isReplyToBot=${isReplyToBot}, activation=${activation}`,
+    `[DEBUG] Reply detection: selfPhone=${selfPhone}, replyPhone=${replyPhone}, selfE164=${selfE164}, replySenderE164=${replySenderE164}, isReplyToBot=${isReplyToBot}, activation=${activation}`,
   );
 
   // Owner control commands bypass activation restrictions
