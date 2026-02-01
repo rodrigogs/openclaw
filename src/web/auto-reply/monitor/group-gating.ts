@@ -43,6 +43,10 @@ export function applyGroupGating(params: {
   logVerbose: (msg: string) => void;
   replyLogger: { debug: (obj: unknown, msg: string) => void };
 }) {
+  console.log(
+    `[DEBUG] applyGroupGating called for group ${params.conversationId}, body: "${params.msg.body}"`,
+  );
+
   const groupPolicy = resolveGroupPolicyFor(params.cfg, params.conversationId);
   if (groupPolicy.allowlistEnabled && !groupPolicy.allowed) {
     params.logVerbose(`Skipping group message ${params.conversationId} (not in allowlist)`);
