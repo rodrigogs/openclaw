@@ -134,7 +134,8 @@ export function applyGroupGating(params: {
     if (activation === "always") return true;
     if (activation === "never") return bypassMention;
     if (activation === "replies") return isReplyToBot || bypassMention;
-    if (activation === "mention+replies") return mentionGate.effectiveWasMentioned;
+    if (activation === "mention+replies")
+      return mentionGate.effectiveWasMentioned || isReplyToBot || bypassMention;
     // Default to "mention" mode
     return !mentionGate.shouldSkip;
   })();
