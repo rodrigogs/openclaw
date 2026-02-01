@@ -65,7 +65,7 @@ export async function deliverWebReply(params: {
     const totalChunks = textChunks.length;
     for (const [index, chunk] of textChunks.entries()) {
       const chunkStarted = Date.now();
-      await sendWithRetry(() => msg.reply(chunk), "text");
+      await sendWithRetry(() => msg.reply(chunk, { quote: index === 0 }), "text");
       if (!skipLog) {
         const durationMs = Date.now() - chunkStarted;
         whatsappOutboundLog.debug(
@@ -106,32 +106,41 @@ export async function deliverWebReply(params: {
       if (media.kind === "image") {
         await sendWithRetry(
           () =>
-            msg.sendMedia({
-              image: media.buffer,
-              caption,
-              mimetype: media.contentType,
-            }),
+            msg.sendMedia(
+              {
+                image: media.buffer,
+                caption,
+                mimetype: media.contentType,
+              },
+              { quote: index === 0 },
+            ),
           "media:image",
         );
       } else if (media.kind === "audio") {
         await sendWithRetry(
           () =>
-            msg.sendMedia({
-              audio: media.buffer,
-              ptt: true,
-              mimetype: media.contentType,
-              caption,
-            }),
+            msg.sendMedia(
+              {
+                audio: media.buffer,
+                ptt: true,
+                mimetype: media.contentType,
+                caption,
+              },
+              { quote: index === 0 },
+            ),
           "media:audio",
         );
       } else if (media.kind === "video") {
         await sendWithRetry(
           () =>
-            msg.sendMedia({
-              video: media.buffer,
-              caption,
-              mimetype: media.contentType,
-            }),
+            msg.sendMedia(
+              {
+                video: media.buffer,
+                caption,
+                mimetype: media.contentType,
+              },
+              { quote: index === 0 },
+            ),
           "media:video",
         );
       } else {
@@ -139,12 +148,15 @@ export async function deliverWebReply(params: {
         const mimetype = media.contentType ?? "application/octet-stream";
         await sendWithRetry(
           () =>
-            msg.sendMedia({
-              document: media.buffer,
-              fileName,
-              caption,
-              mimetype,
-            }),
+            msg.sendMedia(
+              {
+                document: media.buffer,
+                fileName,
+                caption,
+                mimetype,
+              },
+              { quote: index === 0 },
+            ),
           "media:document",
         );
       }
