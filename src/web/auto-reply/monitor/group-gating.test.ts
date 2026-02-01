@@ -37,6 +37,7 @@ const createMsg = (overrides: Record<string, unknown> = {}) => ({
   chatType: "group" as const,
   chatId: "123@g.us",
   selfJid: "15551234567@s.whatsapp.net",
+  selfLid: undefined,
   selfE164: "+15551234567",
   senderE164: "+15559999999",
   senderName: "User",
@@ -131,7 +132,7 @@ describe("applyGroupGating", () => {
     });
   });
 
-  describe("activation mode: replies", () => {
+  describe("activation mode: reply", () => {
     beforeEach(() => {
       setActivationMode("reply");
     });
@@ -238,7 +239,7 @@ describe("applyGroupGating", () => {
     });
   });
 
-  describe("JID normalization", () => {
+  describe("JID normalization and LID support", () => {
     it("matches JIDs with device suffix stripped", () => {
       const cfg = createConfig();
       const msg = createMsg({
@@ -250,7 +251,7 @@ describe("applyGroupGating", () => {
       expect(result.shouldProcess).toBe(true);
     });
 
-    it("falls back to E164 matching when JIDs differ", () => {
+    it("falls back to E164 matching when JIDs differ but E164 matches", () => {
       const cfg = createConfig();
       const msg = createMsg({
         selfJid: "different@s.whatsapp.net",
@@ -258,6 +259,42 @@ describe("applyGroupGating", () => {
         replyToSenderJid: "also-different@s.whatsapp.net",
         selfE164: "+15551234567",
         replyToSenderE164: "+15551234567",
+      });
+      const result = applyGroupGating(createParams(cfg, msg));
+      expect(result.shouldProcess).toBe(true);
+    });
+
+    it("matches LID (reply sender) against selfLid (bot)", () => {
+      const cfg = createConfig();
+      const msg = createMsg({
+        selfJid: "5551234567@s.whatsapp.net",
+        selfLid: "1805999999@lid",
+        replyToId: "m0",
+        replyToSenderJid: "1805999999@lid", // Matches bot's LID
+      });
+      const result = applyGroupGating(createParams(cfg, msg));
+      expect(result.shouldProcess).toBe(true);
+    });
+
+    it("fails if reply sender is a different LID and selfLid is present", () => {
+      const cfg = createConfig();
+      const msg = createMsg({
+        selfJid: "5551234567@s.whatsapp.net",
+        selfLid: "1805999999@lid",
+        replyToId: "m0",
+        replyToSenderJid: "1805888888@lid", // Different LID
+      });
+      const result = applyGroupGating(createParams(cfg, msg));
+      expect(result.shouldProcess).toBe(false);
+    });
+
+    it("matches if reply sender matches selfPhone even if selfLid is missing", () => {
+      const cfg = createConfig();
+      const msg = createMsg({
+        selfJid: "5551234567@s.whatsapp.net",
+        selfLid: undefined,
+        replyToId: "m0",
+        replyToSenderJid: "5551234567@s.whatsapp.net",
       });
       const result = applyGroupGating(createParams(cfg, msg));
       expect(result.shouldProcess).toBe(true);
