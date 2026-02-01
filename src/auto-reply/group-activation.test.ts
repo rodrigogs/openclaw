@@ -12,11 +12,11 @@ describe("normalizeGroupActivation", () => {
   });
 
   it("returns 'replies' for 'replies'", () => {
-    expect(normalizeGroupActivation("replies")).toBe("replies");
+    expect(normalizeGroupActivation("reply")).toBe("reply");
   });
 
-  it("returns 'mention+replies' for 'mention+replies'", () => {
-    expect(normalizeGroupActivation("mention+replies")).toBe("mention+replies");
+  it("returns 'mention+reply' for 'mention+reply'", () => {
+    expect(normalizeGroupActivation("mention+reply")).toBe("mention+reply");
   });
 
   it("returns 'never' for 'never'", () => {
@@ -26,14 +26,14 @@ describe("normalizeGroupActivation", () => {
   it("handles case-insensitive input", () => {
     expect(normalizeGroupActivation("MENTION")).toBe("mention");
     expect(normalizeGroupActivation("Always")).toBe("always");
-    expect(normalizeGroupActivation("REPLIES")).toBe("replies");
-    expect(normalizeGroupActivation("MENTION+REPLIES")).toBe("mention+replies");
+    expect(normalizeGroupActivation("REPLIES")).toBe("reply");
+    expect(normalizeGroupActivation("MENTION+REPLIES")).toBe("mention+reply");
     expect(normalizeGroupActivation("NEVER")).toBe("never");
   });
 
   it("trims whitespace", () => {
     expect(normalizeGroupActivation("  mention  ")).toBe("mention");
-    expect(normalizeGroupActivation("\treplies\n")).toBe("replies");
+    expect(normalizeGroupActivation("\treplies\n")).toBe("reply");
   });
 
   it("returns undefined for invalid values", () => {
@@ -65,13 +65,13 @@ describe("parseActivationCommand", () => {
   it("parses /activation replies", () => {
     const result = parseActivationCommand("/activation replies");
     expect(result.hasCommand).toBe(true);
-    expect(result.mode).toBe("replies");
+    expect(result.mode).toBe("reply");
   });
 
-  it("parses /activation mention+replies", () => {
-    const result = parseActivationCommand("/activation mention+replies");
+  it("parses /activation mention+reply", () => {
+    const result = parseActivationCommand("/activation mention+reply");
     expect(result.hasCommand).toBe(true);
-    expect(result.mode).toBe("mention+replies");
+    expect(result.mode).toBe("mention+reply");
   });
 
   it("parses /activation never", () => {
@@ -94,6 +94,6 @@ describe("parseActivationCommand", () => {
   it("handles case-insensitive commands", () => {
     const result = parseActivationCommand("/ACTIVATION REPLIES");
     expect(result.hasCommand).toBe(true);
-    expect(result.mode).toBe("replies");
+    expect(result.mode).toBe("reply");
   });
 });

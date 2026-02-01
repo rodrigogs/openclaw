@@ -54,7 +54,7 @@ export const WhatsAppAccountSchema = z
         emoji: z.string().optional(),
         direct: z.boolean().optional().default(true),
         group: z
-          .enum(["always", "mention", "replies", "mention+replies", "never"])
+          .enum(["always", "mention", "reply", "mention+reply", "never"])
           .optional()
           .default("mention"),
       })
@@ -127,7 +127,7 @@ export const WhatsAppConfigSchema = z
         emoji: z.string().optional(),
         direct: z.boolean().optional().default(true),
         group: z
-          .enum(["always", "mention", "replies", "mention+replies", "never"])
+          .enum(["always", "mention", "reply", "mention+reply", "never"])
           .optional()
           .default("mention"),
       })

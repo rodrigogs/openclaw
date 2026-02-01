@@ -91,12 +91,12 @@ export type WhatsAppConfig = {
      * Send reactions in group chats:
      * - "always": react to all group messages
      * - "mention": react only when bot is mentioned
-     * - "replies": react to replies to bot messages
-     * - "mention+replies": react when mentioned OR replied to
+     * - "reply": react to replies to bot messages
+     * - "mention+reply": react when mentioned OR replied to
      * - "never": never react in groups
      * Default: "mention"
      */
-    group?: "always" | "mention" | "replies" | "mention+replies" | "never";
+    group?: "always" | "mention" | "reply" | "mention+reply" | "never";
   };
   /** Debounce window (ms) for batching rapid consecutive messages from the same sender (0 to disable). */
   debounceMs?: number;
@@ -161,12 +161,12 @@ export type WhatsAppAccountConfig = {
      * Send reactions in group chats:
      * - "always": react to all group messages
      * - "mention": react only when bot is mentioned
-     * - "replies": react to replies to bot messages
-     * - "mention+replies": react when mentioned OR replied to
+     * - "reply": react to replies to bot messages
+     * - "mention+reply": react when mentioned OR replied to
      * - "never": never react in groups
      * Default: "mention"
      */
-    group?: "always" | "mention" | "replies" | "mention+replies" | "never";
+    group?: "always" | "mention" | "reply" | "mention+reply" | "never";
   };
   /** Debounce window (ms) for batching rapid consecutive messages from the same sender (0 to disable). */
   debounceMs?: number;

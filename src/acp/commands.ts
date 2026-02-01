@@ -23,7 +23,7 @@ export function getAvailableCommands(): AvailableCommand[] {
     { name: "dock-slack", description: "Route replies to Slack." },
     {
       name: "activation",
-      description: "Set group activation (mention|always|replies|mention+replies|never).",
+      description: "Set group activation (mention|always|replies|mention+reply|never).",
     },
     { name: "send", description: "Set send mode (on|off|inherit)." },
     { name: "reset", description: "Reset the session (/new)." },
