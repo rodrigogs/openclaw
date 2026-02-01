@@ -53,7 +53,10 @@ export const WhatsAppAccountSchema = z
       .object({
         emoji: z.string().optional(),
         direct: z.boolean().optional().default(true),
-        group: z.enum(["always", "mentions", "never"]).optional().default("mentions"),
+        group: z
+          .enum(["always", "mention", "replies", "mention+replies", "never"])
+          .optional()
+          .default("mention"),
       })
       .strict()
       .optional(),
@@ -123,7 +126,10 @@ export const WhatsAppConfigSchema = z
       .object({
         emoji: z.string().optional(),
         direct: z.boolean().optional().default(true),
-        group: z.enum(["always", "mentions", "never"]).optional().default("mentions"),
+        group: z
+          .enum(["always", "mention", "replies", "mention+replies", "never"])
+          .optional()
+          .default("mention"),
       })
       .strict()
       .optional(),
