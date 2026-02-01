@@ -394,6 +394,7 @@ export type GatewaySessionRow = {
   verboseLevel?: string;
   reasoningLevel?: string;
   elevatedLevel?: string;
+  groupActivation?: string;
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;

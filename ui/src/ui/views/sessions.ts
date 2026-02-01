@@ -27,6 +27,7 @@ export type SessionsProps = {
       thinkingLevel?: string | null;
       verboseLevel?: string | null;
       reasoningLevel?: string | null;
+      groupActivation?: string | null;
     },
   ) => void;
   onDelete: (key: string) => void;
@@ -41,6 +42,14 @@ const VERBOSE_LEVELS = [
   { value: "full", label: "full" },
 ] as const;
 const REASONING_LEVELS = ["", "off", "on", "stream"] as const;
+const GROUP_ACTIVATION_MODES = [
+  { value: "", label: "inherit (mention)" },
+  { value: "mention", label: "mention" },
+  { value: "always", label: "always" },
+  { value: "replies", label: "replies" },
+  { value: "mention+replies", label: "mention+replies" },
+  { value: "never", label: "never" },
+] as const;
 
 function normalizeProviderId(provider?: string | null): string {
   if (!provider) {
@@ -198,6 +207,7 @@ export function renderSessions(props: SessionsProps) {
           <div>Thinking</div>
           <div>Verbose</div>
           <div>Reasoning</div>
+          <div>Activation</div>
           <div>Actions</div>
         </div>
         ${
@@ -230,6 +240,7 @@ function renderRow(
   const verboseLevels = withCurrentLabeledOption(VERBOSE_LEVELS, verbose);
   const reasoning = row.reasoningLevel ?? "";
   const reasoningLevels = withCurrentOption(REASONING_LEVELS, reasoning);
+  const activation = row.groupActivation ?? "";
   const displayName =
     typeof row.displayName === "string" && row.displayName.trim().length > 0
       ? row.displayName.trim()
@@ -308,6 +319,20 @@ function renderRow(
               html`<option value=${level} ?selected=${reasoning === level}>
                 ${level || "inherit"}
               </option>`,
+          )}
+        </select>
+      </div>
+      <div>
+        <select
+          .value=${activation}
+          ?disabled=${disabled}
+          @change=${(e: Event) => {
+            const value = (e.target as HTMLSelectElement).value;
+            onPatch(row.key, { groupActivation: value || null });
+          }}
+        >
+          ${GROUP_ACTIVATION_MODES.map(
+            (mode) => html`<option value=${mode.value}>${mode.label}</option>`,
           )}
         </select>
       </div>
