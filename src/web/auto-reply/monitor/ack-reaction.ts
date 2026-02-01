@@ -24,7 +24,7 @@ export function maybeSendAckReaction(params: {
   const ackConfig = params.cfg.channels?.whatsapp?.ackReaction;
   const emoji = (ackConfig?.emoji ?? "").trim();
   const directEnabled = ackConfig?.direct ?? true;
-  const groupMode = ackConfig?.group ?? "mentions";
+  const groupMode = ackConfig?.group ?? "mention";
   const conversationIdForCheck = params.msg.conversationId ?? params.msg.from;
 
   const activation =

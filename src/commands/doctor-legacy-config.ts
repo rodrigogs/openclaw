@@ -25,7 +25,7 @@ export function normalizeLegacyConfigValues(cfg: OpenClawConfig): {
         group = "always";
       } else if (legacyScope === "group-mentions") {
         direct = false;
-        group = "mentions";
+        group = "mention";
       }
       next = {
         ...next,
