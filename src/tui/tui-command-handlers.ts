@@ -411,13 +411,13 @@ export function createCommandHandlers(context: CommandHandlerContext) {
         break;
       case "activation":
         if (!args) {
-          chatLog.addSystem("usage: /activation <mention|always|replies|mention+replies|never>");
+          chatLog.addSystem("usage: /activation <mention|always|replies|mention+reply|never>");
           break;
         }
         try {
           const mode = normalizeGroupActivation(args);
           if (!mode) {
-            chatLog.addSystem("usage: /activation <mention|always|replies|mention+replies|never>");
+            chatLog.addSystem("usage: /activation <mention|always|replies|mention+reply|never>");
             break;
           }
           const result = await client.patchSession({

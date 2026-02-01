@@ -13,7 +13,7 @@ export function normalizeLegacyConfigValues(cfg: OpenClawConfig): {
     if (!hasWhatsAppAck) {
       const legacyScope = cfg.messages?.ackReactionScope ?? "group-mentions";
       let direct = true;
-      let group: "always" | "mention" | "replies" | "mention+replies" | "never" = "mention";
+      let group: "always" | "mention" | "reply" | "mention+reply" | "never" = "mention";
       if (legacyScope === "all") {
         direct = true;
         group = "always";

@@ -78,8 +78,8 @@ export const SessionsPatchParamsSchema = Type.Object(
       Type.Union([
         Type.Literal("mention"),
         Type.Literal("always"),
-        Type.Literal("replies"),
-        Type.Literal("mention+replies"),
+        Type.Literal("reply"),
+        Type.Literal("mention+reply"),
         Type.Literal("never"),
         Type.Null(),
       ]),

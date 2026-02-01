@@ -330,7 +330,7 @@ export async function applySessionsPatchToStore(params: {
       const normalized = normalizeGroupActivation(String(raw));
       if (!normalized) {
         return invalid(
-          'invalid groupActivation (use "mention"|"always"|"replies"|"mention+replies"|"never")',
+          'invalid groupActivation (use "mention"|"always"|"reply"|"mention+reply"|"never")',
         );
       }
       next.groupActivation = normalized;

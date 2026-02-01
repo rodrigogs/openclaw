@@ -133,8 +133,8 @@ export function applyGroupGating(params: {
   const shouldProcess = (() => {
     if (activation === "always") return true;
     if (activation === "never") return bypassMention;
-    if (activation === "replies") return isReplyToBot || bypassMention;
-    if (activation === "mention+replies")
+    if (activation === "reply") return isReplyToBot || bypassMention;
+    if (activation === "mention+reply")
       return mentionGate.effectiveWasMentioned || isReplyToBot || bypassMention;
     // Default to "mention" mode
     return !mentionGate.shouldSkip;

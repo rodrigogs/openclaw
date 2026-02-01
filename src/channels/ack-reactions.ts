@@ -1,11 +1,6 @@
 export type AckReactionScope = "all" | "direct" | "group-all" | "group-mentions" | "off" | "none";
 
-export type WhatsAppAckReactionMode =
-  | "always"
-  | "mention"
-  | "replies"
-  | "mention+replies"
-  | "never";
+export type WhatsAppAckReactionMode = "always" | "mention" | "reply" | "mention+reply" | "never";
 
 export type AckReactionGateParams = {
   scope: AckReactionScope | undefined;

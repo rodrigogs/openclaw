@@ -66,9 +66,7 @@ const createParams = (
   ...overrides,
 });
 
-const setActivationMode = (
-  mode: "mention" | "always" | "replies" | "mention+replies" | "never",
-) => {
+const setActivationMode = (mode: "mention" | "always" | "reply" | "mention+reply" | "never") => {
   (resolveGroupActivationFor as ReturnType<typeof vi.fn>).mockReturnValue(mode);
 };
 
@@ -135,7 +133,7 @@ describe("applyGroupGating", () => {
 
   describe("activation mode: replies", () => {
     beforeEach(() => {
-      setActivationMode("replies");
+      setActivationMode("reply");
     });
 
     it("skips messages that are not replies to bot", () => {
@@ -175,9 +173,9 @@ describe("applyGroupGating", () => {
     });
   });
 
-  describe("activation mode: mention+replies", () => {
+  describe("activation mode: mention+reply", () => {
     beforeEach(() => {
-      setActivationMode("mention+replies");
+      setActivationMode("mention+reply");
     });
 
     it("skips messages without mention or reply", () => {
