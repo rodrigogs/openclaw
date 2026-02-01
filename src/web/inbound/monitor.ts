@@ -283,11 +283,11 @@ export async function monitorWebInbox(options: {
           logVerbose(`Presence update failed: ${String(err)}`);
         }
       };
-      const reply = async (text: string) => {
-        await sock.sendMessage(chatJid, { text });
+      const reply = async (text: string, options?: { quote?: boolean }) => {
+        await sock.sendMessage(chatJid, { text }, { quoted: options?.quote ? msg : undefined });
       };
-      const sendMedia = async (payload: AnyMessageContent) => {
-        await sock.sendMessage(chatJid, payload);
+      const sendMedia = async (payload: AnyMessageContent, options?: { quote?: boolean }) => {
+        await sock.sendMessage(chatJid, payload, { quoted: options?.quote ? msg : undefined });
       };
       const timestamp = messageTimestampMs;
       const mentionedJids = extractMentionedJids(msg.message as proto.IMessage | undefined);
