@@ -118,7 +118,8 @@ async function promptTelegramAllowFrom(params: {
       message: "Telegram allowFrom (username or user id)",
       placeholder: "@username",
       initialValue: existingAllowFrom[0] ? String(existingAllowFrom[0]) : undefined,
-      validate: (value) => (String(value ?? "").trim() ? undefined : "Required"),
+      validate: (value: string | undefined) =>
+        String(value ?? "").trim() ? undefined : "Required",
     });
     const parts = parseInput(String(entry));
     const results = await Promise.all(parts.map((part) => resolveTelegramUserId(part)));
@@ -274,7 +275,7 @@ export const telegramOnboardingAdapter: ChannelOnboardingAdapter = {
         token = String(
           await prompter.text({
             message: "Enter Telegram bot token",
-            validate: (value) => (value?.trim() ? undefined : "Required"),
+            validate: (value: string | undefined) => (value?.trim() ? undefined : "Required"),
           }),
         ).trim();
       }
@@ -287,7 +288,7 @@ export const telegramOnboardingAdapter: ChannelOnboardingAdapter = {
         token = String(
           await prompter.text({
             message: "Enter Telegram bot token",
-            validate: (value) => (value?.trim() ? undefined : "Required"),
+            validate: (value: string | undefined) => (value?.trim() ? undefined : "Required"),
           }),
         ).trim();
       }
@@ -295,7 +296,7 @@ export const telegramOnboardingAdapter: ChannelOnboardingAdapter = {
       token = String(
         await prompter.text({
           message: "Enter Telegram bot token",
-          validate: (value) => (value?.trim() ? undefined : "Required"),
+          validate: (value: string | undefined) => (value?.trim() ? undefined : "Required"),
         }),
       ).trim();
     }

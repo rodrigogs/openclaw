@@ -20,7 +20,7 @@ export type WizardTextParams = {
   message: string;
   initialValue?: string;
   placeholder?: string;
-  validate?: (value: string) => string | undefined;
+  validate?: (value: string | undefined) => string | undefined;
 };
 
 export type WizardConfirmParams = {

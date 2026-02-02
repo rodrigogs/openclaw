@@ -101,7 +101,7 @@ async function promptIMessageAllowFrom(params: {
     message: "iMessage allowFrom (handle or chat_id)",
     placeholder: "+15555550123, user@example.com, chat_id:123",
     initialValue: existing[0] ? String(existing[0]) : undefined,
-    validate: (value) => {
+    validate: (value: string | undefined) => {
       const raw = String(value ?? "").trim();
       if (!raw) {
         return "Required";
@@ -206,7 +206,7 @@ export const imessageOnboardingAdapter: ChannelOnboardingAdapter = {
       const entered = await prompter.text({
         message: "imsg CLI path",
         initialValue: resolvedCliPath,
-        validate: (value) => (value?.trim() ? undefined : "Required"),
+        validate: (value: string | undefined) => (value?.trim() ? undefined : "Required"),
       });
       resolvedCliPath = String(entered).trim();
       if (!resolvedCliPath) {

@@ -90,7 +90,7 @@ export async function modelsAuthSetupTokenCommand(
 
   const tokenInput = await text({
     message: "Paste Anthropic setup-token",
-    validate: (value) => validateAnthropicSetupToken(String(value ?? "")),
+    validate: (value: string | undefined) => validateAnthropicSetupToken(String(value ?? "")),
   });
   const token = String(tokenInput).trim();
   const profileId = resolveDefaultTokenProfileId(provider);
@@ -133,7 +133,7 @@ export async function modelsAuthPasteTokenCommand(
 
   const tokenInput = await text({
     message: `Paste token for ${provider}`,
-    validate: (value) => (value?.trim() ? undefined : "Required"),
+    validate: (value: string | undefined) => (value?.trim() ? undefined : "Required"),
   });
   const token = String(tokenInput).trim();
 
@@ -173,7 +173,7 @@ export async function modelsAuthAddCommand(_opts: Record<string, never>, runtime
           String(
             await text({
               message: "Provider id",
-              validate: (value) => (value?.trim() ? undefined : "Required"),
+              validate: (value: string | undefined) => (value?.trim() ? undefined : "Required"),
             }),
           ),
         )
@@ -205,7 +205,7 @@ export async function modelsAuthAddCommand(_opts: Record<string, never>, runtime
     await text({
       message: "Profile id",
       initialValue: profileIdDefault,
-      validate: (value) => (value?.trim() ? undefined : "Required"),
+      validate: (value: string | undefined) => (value?.trim() ? undefined : "Required"),
     }),
   ).trim();
 
@@ -218,7 +218,7 @@ export async function modelsAuthAddCommand(_opts: Record<string, never>, runtime
         await text({
           message: "Expires in (duration)",
           initialValue: "365d",
-          validate: (value) => {
+          validate: (value: string | undefined) => {
             try {
               parseDurationMs(String(value ?? ""), { defaultUnit: "d" });
               return undefined;

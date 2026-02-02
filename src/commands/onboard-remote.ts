@@ -113,7 +113,7 @@ export async function promptRemoteGatewayConfig(
   const urlInput = await prompter.text({
     message: "Gateway WebSocket URL",
     initialValue: suggestedUrl,
-    validate: (value) =>
+    validate: (value: string | undefined) =>
       String(value).trim().startsWith("ws://") || String(value).trim().startsWith("wss://")
         ? undefined
         : "URL must start with ws:// or wss://",
@@ -134,7 +134,7 @@ export async function promptRemoteGatewayConfig(
       await prompter.text({
         message: "Gateway token",
         initialValue: token,
-        validate: (value) => (value?.trim() ? undefined : "Required"),
+        validate: (value: string | undefined) => (value?.trim() ? undefined : "Required"),
       }),
     ).trim();
   } else {

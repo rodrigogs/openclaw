@@ -220,7 +220,8 @@ async function promptDiscordAllowFrom(params: {
       message: "Discord allowFrom (usernames or ids)",
       placeholder: "@alice, 123456789012345678",
       initialValue: existing[0] ? String(existing[0]) : undefined,
-      validate: (value) => (String(value ?? "").trim() ? undefined : "Required"),
+      validate: (value: string | undefined) =>
+        String(value ?? "").trim() ? undefined : "Required",
     });
     const parts = parseInputs(String(entry));
     if (!token) {
@@ -332,7 +333,7 @@ export const discordOnboardingAdapter: ChannelOnboardingAdapter = {
         token = String(
           await prompter.text({
             message: "Enter Discord bot token",
-            validate: (value) => (value?.trim() ? undefined : "Required"),
+            validate: (value: string | undefined) => (value?.trim() ? undefined : "Required"),
           }),
         ).trim();
       }
@@ -345,7 +346,7 @@ export const discordOnboardingAdapter: ChannelOnboardingAdapter = {
         token = String(
           await prompter.text({
             message: "Enter Discord bot token",
-            validate: (value) => (value?.trim() ? undefined : "Required"),
+            validate: (value: string | undefined) => (value?.trim() ? undefined : "Required"),
           }),
         ).trim();
       }
@@ -353,7 +354,7 @@ export const discordOnboardingAdapter: ChannelOnboardingAdapter = {
       token = String(
         await prompter.text({
           message: "Enter Discord bot token",
-          validate: (value) => (value?.trim() ? undefined : "Required"),
+          validate: (value: string | undefined) => (value?.trim() ? undefined : "Required"),
         }),
       ).trim();
     }

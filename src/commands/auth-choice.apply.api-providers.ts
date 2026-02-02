@@ -661,7 +661,7 @@ export async function applyAuthChoiceApiProviders(
     } else {
       const key = await params.prompter.text({
         message: "Enter Synthetic API key",
-        validate: (value) => (value?.trim() ? undefined : "Required"),
+        validate: (value: string | undefined) => (value?.trim() ? undefined : "Required"),
       });
       await setSyntheticApiKey(String(key).trim(), params.agentDir);
     }

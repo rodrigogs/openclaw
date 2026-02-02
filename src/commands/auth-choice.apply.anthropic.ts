@@ -26,7 +26,7 @@ export async function applyAuthChoiceAnthropic(
 
     const tokenRaw = await params.prompter.text({
       message: "Paste Anthropic setup-token",
-      validate: (value) => validateAnthropicSetupToken(String(value ?? "")),
+      validate: (value: string | undefined) => validateAnthropicSetupToken(String(value ?? "")),
     });
     const token = String(tokenRaw).trim();
 

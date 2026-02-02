@@ -270,7 +270,8 @@ async function promptSlackAllowFrom(params: {
       message: "Slack allowFrom (usernames or ids)",
       placeholder: "@alice, U12345678",
       initialValue: existing[0] ? String(existing[0]) : undefined,
-      validate: (value) => (String(value ?? "").trim() ? undefined : "Required"),
+      validate: (value: string | undefined) =>
+        String(value ?? "").trim() ? undefined : "Required",
     });
     const parts = parseInputs(String(entry));
     if (!token) {
@@ -393,13 +394,13 @@ export const slackOnboardingAdapter: ChannelOnboardingAdapter = {
         botToken = String(
           await prompter.text({
             message: "Enter Slack bot token (xoxb-...)",
-            validate: (value) => (value?.trim() ? undefined : "Required"),
+            validate: (value: string | undefined) => (value?.trim() ? undefined : "Required"),
           }),
         ).trim();
         appToken = String(
           await prompter.text({
             message: "Enter Slack app token (xapp-...)",
-            validate: (value) => (value?.trim() ? undefined : "Required"),
+            validate: (value: string | undefined) => (value?.trim() ? undefined : "Required"),
           }),
         ).trim();
       }
@@ -412,13 +413,13 @@ export const slackOnboardingAdapter: ChannelOnboardingAdapter = {
         botToken = String(
           await prompter.text({
             message: "Enter Slack bot token (xoxb-...)",
-            validate: (value) => (value?.trim() ? undefined : "Required"),
+            validate: (value: string | undefined) => (value?.trim() ? undefined : "Required"),
           }),
         ).trim();
         appToken = String(
           await prompter.text({
             message: "Enter Slack app token (xapp-...)",
-            validate: (value) => (value?.trim() ? undefined : "Required"),
+            validate: (value: string | undefined) => (value?.trim() ? undefined : "Required"),
           }),
         ).trim();
       }
@@ -426,13 +427,13 @@ export const slackOnboardingAdapter: ChannelOnboardingAdapter = {
       botToken = String(
         await prompter.text({
           message: "Enter Slack bot token (xoxb-...)",
-          validate: (value) => (value?.trim() ? undefined : "Required"),
+          validate: (value: string | undefined) => (value?.trim() ? undefined : "Required"),
         }),
       ).trim();
       appToken = String(
         await prompter.text({
           message: "Enter Slack app token (xapp-...)",
-          validate: (value) => (value?.trim() ? undefined : "Required"),
+          validate: (value: string | undefined) => (value?.trim() ? undefined : "Required"),
         }),
       ).trim();
     }
