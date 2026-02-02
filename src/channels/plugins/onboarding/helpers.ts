@@ -22,7 +22,7 @@ export const promptAccountId: PromptAccountId = async (params: PromptAccountIdPa
 
   const entered = await params.prompter.text({
     message: `New ${params.label} account id`,
-    validate: (value) => (value?.trim() ? undefined : "Required"),
+    validate: (value: string | undefined) => (value?.trim() ? undefined : "Required"),
   });
   const normalized = normalizeAccountId(String(entered));
   if (String(entered).trim() !== normalized) {

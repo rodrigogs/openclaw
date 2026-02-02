@@ -357,7 +357,8 @@ export async function runConfigureWizard(
             await text({
               message: "Gateway port for service install",
               initialValue: String(gatewayPort),
-              validate: (value) => (Number.isFinite(Number(value)) ? undefined : "Invalid port"),
+              validate: (value: string | undefined) =>
+                Number.isFinite(Number(value)) ? undefined : "Invalid port",
             }),
             runtime,
           );
@@ -481,7 +482,8 @@ export async function runConfigureWizard(
               await text({
                 message: "Gateway port for service install",
                 initialValue: String(gatewayPort),
-                validate: (value) => (Number.isFinite(Number(value)) ? undefined : "Invalid port"),
+                validate: (value: string | undefined) =>
+                  Number.isFinite(Number(value)) ? undefined : "Invalid port",
               }),
               runtime,
             );

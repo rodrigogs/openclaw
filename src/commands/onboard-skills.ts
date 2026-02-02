@@ -195,7 +195,7 @@ export async function setupSkills(
     const apiKey = String(
       await prompter.text({
         message: `Enter ${skill.primaryEnv}`,
-        validate: (value) => (value?.trim() ? undefined : "Required"),
+        validate: (value: string | undefined) => (value?.trim() ? undefined : "Required"),
       }),
     );
     next = upsertSkillEntry(next, skill.skillKey, { apiKey: apiKey.trim() });

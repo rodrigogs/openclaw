@@ -20,7 +20,7 @@ export async function applyAuthChoiceOAuth(
         await params.prompter.text({
           message: "Enter Chutes OAuth client id",
           placeholder: "cid_xxx",
-          validate: (value) => (value?.trim() ? undefined : "Required"),
+          validate: (value: string | undefined) => (value?.trim() ? undefined : "Required"),
         }),
       ).trim();
     const clientSecret = process.env.CHUTES_CLIENT_SECRET?.trim() || undefined;
