@@ -1,55 +1,10 @@
-"use strict";
-var __create = Object.create;
-var __defProp = Object.defineProperty;
-var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
-var __getOwnPropNames = Object.getOwnPropertyNames;
-var __getProtoOf = Object.getPrototypeOf;
-var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
-};
-var __copyProps = (to, from, except, desc) => {
-  if (from && typeof from === "object" || typeof from === "function") {
-    for (let key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
-  }
-  return to;
-};
-var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
-  // If the importer is in node compatibility mode or this is not an ESM
-  // file that has been converted to a CommonJS file using a Babel-
-  // compatible transform (i.e. "__esModule" has not been set), then set
-  // "default" to the CommonJS "module.exports" for node compatibility.
-  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
-  mod
-));
-var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
-var index_exports = {};
-__export(index_exports, {
-  KnowledgeGraph: () => KnowledgeGraph,
-  OllamaEmbeddings: () => OllamaEmbeddings,
-  QdrantClient: () => QdrantClient,
-  TextIndex: () => TextIndex,
-  chunkText: () => chunkText,
-  default: () => index_default,
-  detectCategory: () => detectCategory,
-  findMarkdownFiles: () => findMarkdownFiles,
-  indexDirectory: () => indexDirectory,
-  indexFile: () => indexFile,
-  parseConfig: () => parseConfig,
-  shouldCapture: () => shouldCapture,
-  truncateSnippet: () => truncateSnippet
-});
-module.exports = __toCommonJS(index_exports);
-var import_typebox = require("@sinclair/typebox");
-var import_chokidar = require("chokidar");
-var import_promises = require("node:fs/promises");
-var import_node_path = require("node:path");
-var import_node_crypto = require("node:crypto");
-var import_minisearch = __toESM(require("minisearch"), 1);
-var import_plugin_sdk = require("openclaw/plugin-sdk");
+import { Type } from "@sinclair/typebox";
+import { watch } from "chokidar";
+import { readFile, readdir, stat, mkdir, writeFile } from "node:fs/promises";
+import { join, relative, dirname } from "node:path";
+import { createHash } from "node:crypto";
+import MiniSearch from "minisearch";
+import { jsonResult, readStringParam, readNumberParam } from "openclaw/plugin-sdk";
 const CAPTURED_CATEGORIES = ["preference", "project", "personal", "other"];
 const DEFAULT_CONFIG = {
   qdrantUrl: "http://localhost:6333",
@@ -174,11 +129,11 @@ class KnowledgeGraph {
   graphPath;
   dirty = false;
   constructor(workspacePath) {
-    this.graphPath = (0, import_node_path.join)(workspacePath, ".memory-graph.json");
+    this.graphPath = join(workspacePath, ".memory-graph.json");
   }
   async load() {
     try {
-      const data = await (0, import_promises.readFile)(this.graphPath, "utf-8");
+      const data = await readFile(this.graphPath, "utf-8");
       const raw = JSON.parse(data);
       this.nodes = new Map(Object.entries(raw));
     } catch {
@@ -187,7 +142,7 @@ class KnowledgeGraph {
   async save() {
     if (!this.dirty) return;
     const obj = Object.fromEntries(this.nodes);
-    await (0, import_promises.writeFile)(this.graphPath, JSON.stringify(obj, null, 2));
+    await writeFile(this.graphPath, JSON.stringify(obj, null, 2));
     this.dirty = false;
   }
   extractLinks(text) {
@@ -283,11 +238,11 @@ class TextIndex {
   indexPath;
   dirty = false;
   constructor(workspacePath) {
-    this.indexPath = (0, import_node_path.join)(workspacePath, ".memory-index.json");
-    this.index = new import_minisearch.default({
+    this.indexPath = join(workspacePath, ".memory-index.json");
+    this.index = new MiniSearch({
       fields: ["text", "file"],
       // Fields to index
-      storeFields: ["file", "startLine", "endLine", "text", "source"],
+      storeFields: ["id", "file", "startLine", "endLine", "text", "source"],
       // Fields to return
       searchOptions: {
         boost: { text: 2 },
@@ -297,17 +252,21 @@ class TextIndex {
   }
   async load() {
     try {
-      const data = await (0, import_promises.readFile)(this.indexPath, "utf-8");
-      this.index = import_minisearch.default.loadJSON(data, {
-        fields: ["text", "file"],
-        storeFields: ["file", "startLine", "endLine", "text", "source"]
-      });
-    } catch {
+      const data = await readFile(this.indexPath, "utf-8");
+      const parsed = JSON.parse(data);
+      const indexData = parsed.documentCount !== void 0 ? parsed : parsed.index;
+      if (indexData) {
+        this.index = MiniSearch.loadJSON(indexData, {
+          fields: ["text", "file"],
+          storeFields: ["id", "file", "startLine", "endLine", "text", "source"]
+        });
+      }
+    } catch (err) {
     }
   }
   async save() {
     if (!this.dirty) return;
-    await (0, import_promises.writeFile)(this.indexPath, JSON.stringify(this.index.toJSON()));
+    await writeFile(this.indexPath, JSON.stringify(this.index.toJSON()));
     this.dirty = false;
   }
   add(chunks) {
@@ -324,10 +283,22 @@ class TextIndex {
     this.dirty = true;
   }
   removeByFile(file) {
-    const results = this.index.search(file, { fields: ["file"], combineWith: "AND" });
-    const toRemove = results.filter((r) => r.file === file);
-    toRemove.forEach((r) => this.index.remove(r.id));
-    if (toRemove.length > 0) this.dirty = true;
+    const json = this.index.toJSON();
+    const allDocs = Object.values(json.documents || {});
+    const docsToKeep = allDocs.filter((doc) => doc.file !== file);
+    if (docsToKeep.length < allDocs.length) {
+      const newIndex = new MiniSearch({
+        fields: ["text", "file"],
+        storeFields: ["id", "file", "startLine", "endLine", "text", "source"],
+        searchOptions: {
+          boost: { text: 2 },
+          fuzzy: 0.2
+        }
+      });
+      newIndex.addAll(docsToKeep);
+      this.index = newIndex;
+      this.dirty = true;
+    }
   }
   search(query, limit) {
     return this.index.search(query, { limit });
@@ -391,7 +362,7 @@ class QdrantClient {
         startLine: 1,
         endLine: 1,
         text: memory.text,
-        hash: (0, import_node_crypto.createHash)("sha256").update(memory.text).digest("hex"),
+        hash: createHash("sha256").update(memory.text).digest("hex"),
         category: memory.category,
         capturedAt: memory.capturedAt,
         sessionKey: memory.sessionKey,
@@ -583,12 +554,12 @@ function chunkText(text, targetWords = 400, overlapWords = 80) {
   return chunks;
 }
 async function indexFile(filePath, relPath, qdrant, embeddings, textIndex, knowledgeGraph) {
-  const content = await (0, import_promises.readFile)(filePath, "utf-8");
+  const content = await readFile(filePath, "utf-8");
   const chunks = chunkText(content);
   if (chunks.length === 0) return 0;
   const processedChunks = chunks.map((chunk) => {
-    const id = (0, import_node_crypto.createHash)("sha256").update(`${relPath}:${chunk.startLine}-${chunk.endLine}`).digest("hex").slice(0, 32);
-    const hash = (0, import_node_crypto.createHash)("sha256").update(chunk.text).digest("hex");
+    const id = createHash("sha256").update(`${relPath}:${chunk.startLine}-${chunk.endLine}`).digest("hex").slice(0, 32);
+    const hash = createHash("sha256").update(chunk.text).digest("hex");
     return { ...chunk, id, file: relPath, hash };
   });
   await qdrant.deleteByFile(relPath);
@@ -606,9 +577,9 @@ async function indexFile(filePath, relPath, qdrant, embeddings, textIndex, knowl
 async function findMarkdownFiles(dir) {
   const files = [];
   try {
-    const entries = await (0, import_promises.readdir)(dir, { withFileTypes: true });
+    const entries = await readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
-      const fullPath = (0, import_node_path.join)(dir, entry.name);
+      const fullPath = join(dir, entry.name);
       if (entry.isDirectory()) {
         files.push(...await findMarkdownFiles(fullPath));
       } else if (entry.isFile() && entry.name.endsWith(".md")) {
@@ -623,7 +594,7 @@ async function indexDirectory(dir, prefix, qdrant, embeddings, logger, textIndex
   const files = await findMarkdownFiles(dir);
   let totalChunks = 0;
   for (const file of files) {
-    const relPath = `${prefix}${(0, import_node_path.relative)(dir, file)}`;
+    const relPath = `${prefix}${relative(dir, file)}`;
     try {
       const chunks = await indexFile(file, relPath, qdrant, embeddings, textIndex, knowledgeGraph);
       totalChunks += chunks;
@@ -709,13 +680,13 @@ const memoryQdrantPlugin = {
           textIndex,
           knowledgeGraph
         );
-        const memoryMd = (0, import_node_path.join)(resolvedWorkspacePath, "MEMORY.md");
+        const memoryMd = join(resolvedWorkspacePath, "MEMORY.md");
         try {
-          await (0, import_promises.stat)(memoryMd);
+          await stat(memoryMd);
           totalChunks += await indexFile(memoryMd, "MEMORY.md", qdrant, embeddings, textIndex, knowledgeGraph);
         } catch {
         }
-        const memoryDir = (0, import_node_path.join)(resolvedWorkspacePath, "memory");
+        const memoryDir = join(resolvedWorkspacePath, "memory");
         totalChunks += await indexDirectory(
           memoryDir,
           "memory/",
@@ -728,9 +699,9 @@ const memoryQdrantPlugin = {
         for (const extraRoot of extraRoots) {
           const resolved = extraRoot.resolved;
           try {
-            const stats = await (0, import_promises.stat)(resolved);
+            const stats = await stat(resolved);
             if (stats.isFile() && resolved.endsWith(".md")) {
-              const rel = (0, import_node_path.relative)((0, import_node_path.dirname)(resolved), resolved);
+              const rel = relative(dirname(resolved), resolved);
               totalChunks += await indexFile(
                 resolved,
                 `extra/${extraRoot.index}/${rel}`,
@@ -762,34 +733,34 @@ const memoryQdrantPlugin = {
         indexing = false;
       }
     }
-    const MemorySearchSchema = import_typebox.Type.Object({
-      query: import_typebox.Type.String(),
-      maxResults: import_typebox.Type.Optional(import_typebox.Type.Number()),
-      minScore: import_typebox.Type.Optional(import_typebox.Type.Number())
+    const MemorySearchSchema = Type.Object({
+      query: Type.String(),
+      maxResults: Type.Optional(Type.Number()),
+      minScore: Type.Optional(Type.Number())
     });
-    const MemoryGetSchema = import_typebox.Type.Object({
-      path: import_typebox.Type.String(),
-      from: import_typebox.Type.Optional(import_typebox.Type.Number()),
-      lines: import_typebox.Type.Optional(import_typebox.Type.Number())
+    const MemoryGetSchema = Type.Object({
+      path: Type.String(),
+      from: Type.Optional(Type.Number()),
+      lines: Type.Optional(Type.Number())
     });
-    const CapturedCategorySchema = import_typebox.Type.Union(
-      CAPTURED_CATEGORIES.map((category) => import_typebox.Type.Literal(category))
+    const CapturedCategorySchema = Type.Union(
+      CAPTURED_CATEGORIES.map((category) => Type.Literal(category))
     );
-    const MemoryCapturedListSchema = import_typebox.Type.Object({
-      category: import_typebox.Type.Optional(CapturedCategorySchema),
-      limit: import_typebox.Type.Optional(import_typebox.Type.Number()),
-      offset: import_typebox.Type.Optional(import_typebox.Type.String())
+    const MemoryCapturedListSchema = Type.Object({
+      category: Type.Optional(CapturedCategorySchema),
+      limit: Type.Optional(Type.Number()),
+      offset: Type.Optional(Type.String())
     });
-    const MemoryCapturedDeleteSchema = import_typebox.Type.Object({
-      id: import_typebox.Type.String()
+    const MemoryCapturedDeleteSchema = Type.Object({
+      id: Type.String()
     });
-    const MemoryCapturedExportSchema = import_typebox.Type.Object({
-      category: import_typebox.Type.Optional(CapturedCategorySchema),
-      limit: import_typebox.Type.Optional(import_typebox.Type.Number()),
-      title: import_typebox.Type.Optional(import_typebox.Type.String())
+    const MemoryCapturedExportSchema = Type.Object({
+      category: Type.Optional(CapturedCategorySchema),
+      limit: Type.Optional(Type.Number()),
+      title: Type.Optional(Type.String())
     });
-    const MemoryOrganizeSchema = import_typebox.Type.Object({
-      dryRun: import_typebox.Type.Optional(import_typebox.Type.Boolean())
+    const MemoryOrganizeSchema = Type.Object({
+      dryRun: Type.Optional(Type.Boolean())
     });
     api.registerTool(
       {
@@ -798,9 +769,9 @@ const memoryQdrantPlugin = {
         description: "Mandatory recall step: semantically search MEMORY.md + memory/*.md (and optional session transcripts) before answering questions about prior work, decisions, dates, people, preferences, or todos; returns top snippets with path + lines.",
         parameters: MemorySearchSchema,
         execute: async (_toolCallId, params) => {
-          const query = (0, import_plugin_sdk.readStringParam)(params, "query", { required: true });
-          const maxResults = (0, import_plugin_sdk.readNumberParam)(params, "maxResults") ?? 5;
-          const minScore = (0, import_plugin_sdk.readNumberParam)(params, "minScore") ?? 0.5;
+          const query = readStringParam(params, "query", { required: true });
+          const maxResults = readNumberParam(params, "maxResults") ?? 5;
+          const minScore = readNumberParam(params, "minScore") ?? 0.5;
           try {
             const vector = await embeddings.embed(query);
             const vectorResults = await qdrant.search(vector, maxResults, minScore);
@@ -838,7 +809,7 @@ const memoryQdrantPlugin = {
                 related: relatedFiles.length > 0 ? relatedFiles : void 0
               };
             }).sort((a, b) => b.score - a.score).slice(0, maxResults);
-            return (0, import_plugin_sdk.jsonResult)({
+            return jsonResult({
               results: results.map((r) => ({
                 file: r.file,
                 startLine: r.startLine,
@@ -854,7 +825,7 @@ const memoryQdrantPlugin = {
             });
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
-            return (0, import_plugin_sdk.jsonResult)({ results: [], disabled: false, error: message });
+            return jsonResult({ results: [], disabled: false, error: message });
           }
         }
       },
@@ -867,19 +838,19 @@ const memoryQdrantPlugin = {
         description: "Safe snippet read from MEMORY.md or memory/*.md with optional from/lines; use after memory_search to pull only the needed lines and keep context small.",
         parameters: MemoryGetSchema,
         execute: async (_toolCallId, params) => {
-          const relPath = (0, import_plugin_sdk.readStringParam)(params, "path", { required: true });
-          const fromLine = (0, import_plugin_sdk.readNumberParam)(params, "from", { integer: true }) ?? 1;
-          const lineCount = (0, import_plugin_sdk.readNumberParam)(params, "lines", { integer: true });
+          const relPath = readStringParam(params, "path", { required: true });
+          const fromLine = readNumberParam(params, "from", { integer: true }) ?? 1;
+          const lineCount = readNumberParam(params, "lines", { integer: true });
           const allowedPrefixes = ["MEMORY.md", "memory/", "vault/", "extra/", "captured/"];
           if (!allowedPrefixes.some((prefix) => relPath.startsWith(prefix))) {
-            return (0, import_plugin_sdk.jsonResult)({
+            return jsonResult({
               path: relPath,
               text: "",
               error: "Access denied: path outside indexed sources"
             });
           }
           if (relPath.startsWith("captured/")) {
-            return (0, import_plugin_sdk.jsonResult)({
+            return jsonResult({
               path: relPath,
               text: "(captured memory - stored in vector DB only)",
               note: "Use memory_search to find captured memories"
@@ -888,28 +859,28 @@ const memoryQdrantPlugin = {
           try {
             let fullPath;
             if (relPath.startsWith("vault/")) {
-              fullPath = (0, import_node_path.join)(resolvedVaultPath, relPath.slice(6));
+              fullPath = join(resolvedVaultPath, relPath.slice(6));
             } else if (relPath.startsWith("extra/")) {
               const parts = relPath.split("/").slice(1);
               const index = Number(parts.shift());
               const root = extraRoots.find((entry) => entry.index === index);
               if (!root) {
-                return (0, import_plugin_sdk.jsonResult)({
+                return jsonResult({
                   path: relPath,
                   text: "",
                   error: "Unknown extra path index"
                 });
               }
-              fullPath = (0, import_node_path.join)(root.resolved, ...parts);
+              fullPath = join(root.resolved, ...parts);
             } else {
-              fullPath = (0, import_node_path.join)(resolvedWorkspacePath, relPath);
+              fullPath = join(resolvedWorkspacePath, relPath);
             }
-            const content = await (0, import_promises.readFile)(fullPath, "utf-8");
+            const content = await readFile(fullPath, "utf-8");
             const lines = content.split("\n");
             const start = Math.max(0, fromLine - 1);
             const end = lineCount ? Math.min(lines.length, start + lineCount) : lines.length;
             const text = lines.slice(start, end).join("\n");
-            return (0, import_plugin_sdk.jsonResult)({
+            return jsonResult({
               path: relPath,
               from: fromLine,
               lines: end - start,
@@ -917,7 +888,7 @@ const memoryQdrantPlugin = {
             });
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
-            return (0, import_plugin_sdk.jsonResult)({ path: relPath, text: "", error: message });
+            return jsonResult({ path: relPath, text: "", error: message });
           }
         }
       },
@@ -931,21 +902,21 @@ const memoryQdrantPlugin = {
         parameters: MemoryCapturedListSchema,
         execute: async (_toolCallId, params) => {
           const category = params.category;
-          const limit = (0, import_plugin_sdk.readNumberParam)(params, "limit", { integer: true }) ?? 20;
-          const offset = (0, import_plugin_sdk.readStringParam)(params, "offset", { allowEmpty: true });
+          const limit = readNumberParam(params, "limit", { integer: true }) ?? 20;
+          const offset = readStringParam(params, "offset", { allowEmpty: true });
           try {
             const { items, nextOffset } = await qdrant.listCaptured(
               category,
               limit,
               offset || void 0
             );
-            return (0, import_plugin_sdk.jsonResult)({
+            return jsonResult({
               items,
               nextOffset
             });
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
-            return (0, import_plugin_sdk.jsonResult)({ items: [], error: message });
+            return jsonResult({ items: [], error: message });
           }
         }
       },
@@ -958,13 +929,13 @@ const memoryQdrantPlugin = {
         description: "Delete a captured memory by id.",
         parameters: MemoryCapturedDeleteSchema,
         execute: async (_toolCallId, params) => {
-          const id = (0, import_plugin_sdk.readStringParam)(params, "id", { required: true });
+          const id = readStringParam(params, "id", { required: true });
           try {
             await qdrant.deleteCaptured(id);
-            return (0, import_plugin_sdk.jsonResult)({ id, deleted: true });
+            return jsonResult({ id, deleted: true });
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
-            return (0, import_plugin_sdk.jsonResult)({ id, deleted: false, error: message });
+            return jsonResult({ id, deleted: false, error: message });
           }
         }
       },
@@ -978,16 +949,16 @@ const memoryQdrantPlugin = {
         parameters: MemoryCapturedExportSchema,
         execute: async (_toolCallId, params) => {
           const category = params.category;
-          const limit = (0, import_plugin_sdk.readNumberParam)(params, "limit", { integer: true }) ?? 100;
-          const title = (0, import_plugin_sdk.readStringParam)(params, "title", { allowEmpty: true })?.trim();
+          const limit = readNumberParam(params, "limit", { integer: true }) ?? 100;
+          const title = readStringParam(params, "title", { allowEmpty: true })?.trim();
           try {
             const { items } = await qdrant.listCaptured(category, limit);
-            const inboxDir = (0, import_node_path.join)(resolvedVaultPath, "00 Inbox");
-            await (0, import_promises.mkdir)(inboxDir, { recursive: true });
+            const inboxDir = join(resolvedVaultPath, "00 Inbox");
+            await mkdir(inboxDir, { recursive: true });
             const now = /* @__PURE__ */ new Date();
             const timestamp = now.toISOString().replace(/[:.]/g, "-");
             const filename = `${title?.length ? title : "captured-memories"}-${timestamp}.md`;
-            const fullPath = (0, import_node_path.join)(inboxDir, filename);
+            const fullPath = join(inboxDir, filename);
             const header = `# ${title?.length ? title : "Captured memories"}
 
 `;
@@ -999,12 +970,12 @@ const memoryQdrantPlugin = {
               const date = item.capturedAt ? new Date(item.capturedAt).toISOString() : "";
               return `- **${item.category}** (${date}) ${item.text}`;
             }).join("\n");
-            await (0, import_promises.writeFile)(fullPath, `${header}${meta}${body}
+            await writeFile(fullPath, `${header}${meta}${body}
 `);
-            return (0, import_plugin_sdk.jsonResult)({ path: `vault/00 Inbox/${filename}`, count: items.length });
+            return jsonResult({ path: `vault/00 Inbox/${filename}`, count: items.length });
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
-            return (0, import_plugin_sdk.jsonResult)({ error: message });
+            return jsonResult({ error: message });
           }
         }
       },
@@ -1023,13 +994,13 @@ const memoryQdrantPlugin = {
             const meaningfulOrphans = orphans.filter(
               (f) => !f.includes("01 Journal/") && !f.includes("memory/") && !f.includes("captured/")
             );
-            return (0, import_plugin_sdk.jsonResult)({
+            return jsonResult({
               orphans: meaningfulOrphans,
               count: meaningfulOrphans.length,
               note: "These files have no incoming links. Consider linking them from an Index note."
             });
           } catch (err) {
-            return (0, import_plugin_sdk.jsonResult)({ error: String(err) });
+            return jsonResult({ error: String(err) });
           }
         }
       },
@@ -1094,7 +1065,7 @@ ${memoryContext}
           }
           const category = detectCategory(text);
           const memory = {
-            id: (0, import_node_crypto.createHash)("sha256").update(`${Date.now()}-${text}`).digest("hex").slice(0, 32),
+            id: createHash("sha256").update(`${Date.now()}-${text}`).digest("hex").slice(0, 32),
             text,
             category,
             capturedAt: Date.now(),
@@ -1120,7 +1091,7 @@ ${memoryContext}
         await knowledgeGraph.load();
         if (cfg.autoIndex) {
           try {
-            await (0, import_promises.stat)(resolvedVaultPath);
+            await stat(resolvedVaultPath);
           } catch (err) {
             api.logger.error(
               `memory-qdrant: vaultPath missing or inaccessible: ${resolvedVaultPath}`
@@ -1130,11 +1101,11 @@ ${memoryContext}
           indexingPromise = runIndexing();
           const watchPaths = [
             resolvedVaultPath,
-            (0, import_node_path.join)(resolvedWorkspacePath, "MEMORY.md"),
-            (0, import_node_path.join)(resolvedWorkspacePath, "memory"),
+            join(resolvedWorkspacePath, "MEMORY.md"),
+            join(resolvedWorkspacePath, "memory"),
             ...extraRoots.map((entry) => entry.resolved)
           ];
-          fileWatcher = (0, import_chokidar.watch)(watchPaths, {
+          fileWatcher = watch(watchPaths, {
             ignored: /(^|[\/\\])\../,
             // Ignore dotfiles
             persistent: true,
@@ -1162,13 +1133,13 @@ ${memoryContext}
   }
 };
 var index_default = memoryQdrantPlugin;
-// Annotate the CommonJS export names for ESM import in node:
-0 && (module.exports = {
+export {
   KnowledgeGraph,
   OllamaEmbeddings,
   QdrantClient,
   TextIndex,
   chunkText,
+  index_default as default,
   detectCategory,
   findMarkdownFiles,
   indexDirectory,
@@ -1176,4 +1147,4 @@ var index_default = memoryQdrantPlugin;
   parseConfig,
   shouldCapture,
   truncateSnippet
-});
+};

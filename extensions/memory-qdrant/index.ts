@@ -403,7 +403,7 @@ export class TextIndex {
     this.indexPath = join(workspacePath, ".memory-index.json");
     this.index = new MiniSearch({
       fields: ["text", "file"], // Fields to index
-      storeFields: ["file", "startLine", "endLine", "text", "source"], // Fields to return
+      storeFields: ["id", "file", "startLine", "endLine", "text", "source"], // Fields to return
       searchOptions: {
         boost: { text: 2 },
         fuzzy: 0.2,
@@ -414,25 +414,46 @@ export class TextIndex {
   async load(): Promise<void> {
     try {
       const data = await readFile(this.indexPath, "utf-8");
-      this.index = MiniSearch.loadJSON(data, {
-        fields: ["text", "file"],
-        storeFields: ["file", "startLine", "endLine", "text", "source"],
-      });
-    } catch {
+      const parsed = JSON.parse(data);
+      
+      // Handle the case where we stored both the index and the documents
+      const indexData = parsed.index !== undefined ? parsed.index : parsed;
+      const storedDocs = parsed.documents !== undefined ? parsed.documents : [];
+
+      if (indexData && typeof indexData === "object" && indexData.documentCount !== undefined) {
+        this.index = MiniSearch.loadJSON(JSON.stringify(indexData), {
+          fields: ["text", "file"],
+          storeFields: ["id", "file", "startLine", "endLine", "text", "source"],
+        });
+        
+        // If we have documents, we don't need to do anything else for search,
+        // but we'll use them for removeByFile if they were provided.
+        // We'll store them in an internal map.
+      }
+    } catch (err) {
       // Index doesn't exist yet, start fresh
     }
   }
 
   async save(): Promise<void> {
     if (!this.dirty) return;
-    await writeFile(this.indexPath, JSON.stringify(this.index.toJSON()));
+    
+    // MiniSearch toJSON returns the index object.
+    // We'll wrap it to potentially include more metadata in the future.
+    const data = {
+      index: this.index.toJSON(),
+      // We don't strictly need to store documents if we only use them for removeByFile
+      // during the same session, but for full robustness we could.
+      // However, to keep the file small and since it's a cache, we'll just save the index.
+    };
+    
+    await writeFile(this.indexPath, JSON.stringify(data));
     this.dirty = false;
   }
 
   add(chunks: MemoryChunk[]): void {
     if (chunks.length === 0) return;
     
-    // MiniSearch requires unique IDs. We use the same ID as Qdrant.
     const docs = chunks.map((c) => ({
       id: c.id,
       file: c.file,
@@ -447,42 +468,30 @@ export class TextIndex {
   }
 
   removeByFile(file: string): void {
-    // MiniSearch doesn't support delete by query nicely, we filter.
-    // Actually, we can search by file and remove IDs.
-    // Or just filter the document list. 
-    // Optimization: Since we reindex files, we can just remove all docs with this file.
-    // MiniSearch `discard` is deprecated, use `remove`.
-    // We need to find IDs first.
-    // Since MiniSearch is in-memory, we can iterate if needed, but search is faster.
+    // MiniSearch doesn't have an easy way to remove by field.
+    // We search for the file path in the 'file' field.
+    // We use a strict search if possible, or just filter results.
+    const results = this.index.search(file, { 
+      fields: ["file"], 
+      combineWith: "AND"
+    });
     
-    // Hack: searching for the exact filename might work if tokenized correctly.
-    // Better: We track IDs? No.
-    // Let's iterate. MiniSearch exposes `documentCount`.
-    // Actually, maybe we just use `discard` logic manually?
-    // It's safer to just rely on unique IDs overwrite? 
-    // MiniSearch `add` with same ID updates the doc? Yes, "If the document ID already exists, it is updated."
-    // BUT if the file shrunk, we have orphan chunks.
-    // We should remove all chunks for this file.
-    
-    // We can filter `this.index.documentIds`
-    // This might be slow for massive vaults.
-    // Ideally we store a map of File -> [IDs].
-    // For now, let's assume `add` overwrites enough, and we accept some orphans until full reindex?
-    // No, orphans are bad for search.
-    // Let's implement a removal scan.
-    
-    // MiniSearch internal `_documentIds` is private.
-    // We can use a separate map in this class?
-    // Yes, let's keep a simple Map<File, Set<ID>>.
-    // But persistence? The map needs to be saved too? 
-    // That complicates things.
-    
-    // Alternative: Just search for `file` field?
-    // If we index `file` as a field (we did), we can search it.
-    const results = this.index.search(file, { fields: ["file"], combineWith: "AND" });
-    const toRemove = results.filter((r: any) => r.file === file);
-    toRemove.forEach((r: any) => this.index.remove(r.id));
-    if (toRemove.length > 0) this.dirty = true;
+    let removed = false;
+    for (const res of results) {
+      // Check for exact match to avoid issues with paths being tokens
+      if (res.file === file) {
+        try {
+          this.index.remove(res);
+          removed = true;
+        } catch {
+          // Document might not be in the index or already removed
+        }
+      }
+    }
+
+    if (removed) {
+      this.dirty = true;
+    }
   }
 
   search(query: string, limit: number): any[] {

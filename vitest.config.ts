@@ -41,7 +41,7 @@ export default defineConfig({
         branches: 55,
         statements: 70,
       },
-      include: ["src/**/*.ts"],
+      include: ["src/**/*.ts", "extensions/**/*.ts"],
       exclude: [
         "src/**/*.test.ts",
         // Entrypoints and wiring (covered by CI smoke + manual/e2e flows).
