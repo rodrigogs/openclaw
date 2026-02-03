@@ -1,9 +1,9 @@
 /**
  * OpenClaw Memory (Qdrant + Ollama) Plugin
- * 
+ *
  * Local memory search with Qdrant vector DB, Ollama embeddings, and Obsidian vault support.
  * Provides memory_search and memory_get tools following the OpenClaw memory plugin contract.
- * 
+ *
  * Features:
  * - Semantic search across workspace + Obsidian vault
  * - Auto-recall: injects relevant memories before agent starts
@@ -11,13 +11,13 @@
  * - 100% local: no external API calls, full privacy
  */
 
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { Type } from "@sinclair/typebox";
 import { watch } from "chokidar";
+import MiniSearch from "minisearch";
+import { createHash } from "node:crypto";
 import { readFile, readdir, stat, appendFile, mkdir, writeFile } from "node:fs/promises";
 import { join, relative, dirname } from "node:path";
-import { createHash } from "node:crypto";
-import MiniSearch from "minisearch";
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { jsonResult, readStringParam, readNumberParam } from "openclaw/plugin-sdk";
 
 // ============================================================================
@@ -33,16 +33,16 @@ type MemoryChunk = {
   hash: string;
 };
 
-    type MemorySearchResult = {
-      id: string;
-      file: string;
-      startLine: number;
-      endLine: number;
-      snippet: string;
-      score: number;
-      source: "vault" | "workspace" | "captured";
-      related?: string[];
-    };
+type MemorySearchResult = {
+  id: string;
+  file: string;
+  startLine: number;
+  endLine: number;
+  snippet: string;
+  score: number;
+  source: "vault" | "workspace" | "captured";
+  related?: string[];
+};
 
 const CAPTURED_CATEGORIES = ["preference", "project", "personal", "other"] as const;
 
@@ -104,7 +104,7 @@ export function parseConfig(raw: unknown, workspaceDir: string): Required<Plugin
     throw new Error("memory-qdrant: config required");
   }
   const cfg = raw as Partial<PluginConfig>;
-  
+
   if (!cfg.vaultPath || typeof cfg.vaultPath !== "string") {
     throw new Error("memory-qdrant: vaultPath is required");
   }
@@ -149,8 +149,8 @@ const MEMORY_TRIGGERS = [
   /\b(decidimos|decidiu|vamos usar|escolhi|optei)\b/i,
   /\b(decided|will use|going to use|chose|picked)\b/i,
   // Entities (phone, email, names)
-  /\+\d{10,}/,  // Phone numbers
-  /[\w.-]+@[\w.-]+\.\w{2,}/,  // Emails
+  /\+\d{10,}/, // Phone numbers
+  /[\w.-]+@[\w.-]+\.\w{2,}/, // Emails
   /\b(meu nome é|me chamo|sou o|sou a)\b/i,
   /\b(my name is|i am called|call me)\b/i,
   // Facts with possessives
@@ -169,17 +169,17 @@ const MEMORY_TRIGGERS = [
  */
 const MEMORY_EXCLUSIONS = [
   // System/tool output
-  /<[^>]+>/,  // XML tags
-  /```[\s\S]*?```/,  // Code blocks (non-greedy to handle multiple blocks)
-  /^\s*[-*]\s+/m,  // Markdown lists (likely tool output)
+  /<[^>]+>/, // XML tags
+  /```[\s\S]*?```/, // Code blocks (non-greedy to handle multiple blocks)
+  /^\s*[-*]\s+/m, // Markdown lists (likely tool output)
   // Agent confirmations
   /\b(pronto|feito|ok|certo|entendi|anotado)\b.*!?\s*$/i,
   /\b(done|got it|noted|understood|saved)\b.*!?\s*$/i,
   // Questions (don't capture questions, capture answers)
   /\?\s*$/,
   // Very short or very long
-  /^.{0,14}$/,  // Less than 15 chars
-  /^.{501,}$/,  // More than 500 chars
+  /^.{0,14}$/, // Less than 15 chars
+  /^.{501,}$/, // More than 500 chars
 ];
 
 /**
@@ -190,19 +190,19 @@ export function shouldCapture(text: string): boolean {
   for (const pattern of MEMORY_EXCLUSIONS) {
     if (pattern.test(text)) return false;
   }
-  
+
   // Skip if already contains memory injection
   if (text.includes("<relevant-memories>")) return false;
-  
+
   // Skip emoji-heavy content (likely agent output)
   const emojiCount = (text.match(/[\u{1F300}-\u{1F9FF}]/gu) || []).length;
   if (emojiCount > 3) return false;
-  
+
   // Check if any trigger matches
   for (const pattern of MEMORY_TRIGGERS) {
     if (pattern.test(text)) return true;
   }
-  
+
   return false;
 }
 
@@ -281,11 +281,11 @@ export class KnowledgeGraph {
 
   updateFile(file: string, text: string): void {
     const links = this.extractLinks(text);
-    
+
     // Update current node
     const existing = this.nodes.get(file);
     const oldLinks = existing ? existing.links : [];
-    
+
     this.nodes.set(file, {
       file,
       links,
@@ -299,7 +299,7 @@ export class KnowledgeGraph {
         this.removeBacklink(oldLink, file);
       }
     }
-    
+
     // 2. Add new backlinks
     for (const link of links) {
       if (!oldLinks.includes(link)) {
@@ -323,7 +323,7 @@ export class KnowledgeGraph {
   private removeBacklink(target: string, source: string): void {
     const node = this.nodes.get(target);
     if (node) {
-      node.backlinks = node.backlinks.filter(b => b !== source);
+      node.backlinks = node.backlinks.filter((b) => b !== source);
       this.nodes.set(target, node);
     }
   }
@@ -336,7 +336,7 @@ export class KnowledgeGraph {
     for (const link of node.links) {
       this.removeBacklink(link, file);
     }
-    
+
     // Note: We don't remove the node entirely if it has backlinks pointing to it
     // It becomes a "ghost" node (referenced but not existing file)
     if (node.backlinks.length === 0) {
@@ -349,30 +349,30 @@ export class KnowledgeGraph {
     this.dirty = true;
   }
 
-  getRelated(file: string): { links: string[], backlinks: string[] } {
+  getRelated(file: string): { links: string[]; backlinks: string[] } {
     // Try exact match, then try with/without extension, then fuzzy
     // For Obsidian, links usually don't have .md
-    
+
     // 1. Try exact
     let node = this.nodes.get(file);
-    
+
     // 2. Try removing extension
     if (!node && file.endsWith(".md")) {
       node = this.nodes.get(file.slice(0, -3));
     }
-    
+
     // 3. Try finding by basename (e.g. "Projects/Foo.md" -> link "Foo")
     if (!node) {
-        // Reverse search: find a key that ends with the basename
-        const basename = file.split("/").pop()?.replace(".md", "");
-        if (basename) {
-            for (const [key, value] of this.nodes) {
-                if (key === basename || key.endsWith("/" + basename)) {
-                    node = value;
-                    break;
-                }
-            }
+      // Reverse search: find a key that ends with the basename
+      const basename = file.split("/").pop()?.replace(".md", "");
+      if (basename) {
+        for (const [key, value] of this.nodes) {
+          if (key === basename || key.endsWith("/" + basename)) {
+            node = value;
+            break;
+          }
         }
+      }
     }
 
     if (!node) return { links: [], backlinks: [] };
@@ -403,7 +403,7 @@ export class TextIndex {
     this.indexPath = join(workspacePath, ".memory-index.json");
     this.index = new MiniSearch({
       fields: ["text", "file"], // Fields to index
-      storeFields: ["file", "startLine", "endLine", "text", "source"], // Fields to return
+      storeFields: ["id", "file", "startLine", "endLine", "text", "source"], // Fields to return
       searchOptions: {
         boost: { text: 2 },
         fuzzy: 0.2,
@@ -414,32 +414,57 @@ export class TextIndex {
   async load(): Promise<void> {
     try {
       const data = await readFile(this.indexPath, "utf-8");
-      this.index = MiniSearch.loadJSON(data, {
-        fields: ["text", "file"],
-        storeFields: ["file", "startLine", "endLine", "text", "source"],
-      });
-    } catch {
+      const parsed = JSON.parse(data);
+
+      // Handle the case where we stored both the index and the documents
+      const indexData = parsed.index !== undefined ? parsed.index : parsed;
+      const storedDocs = parsed.documents !== undefined ? parsed.documents : [];
+
+      if (indexData && typeof indexData === "object" && indexData.documentCount !== undefined) {
+        this.index = MiniSearch.loadJSON(JSON.stringify(indexData), {
+          fields: ["text", "file"],
+          storeFields: ["id", "file", "startLine", "endLine", "text", "source"],
+        });
+
+        // If we have documents, we don't need to do anything else for search,
+        // but we'll use them for removeByFile if they were provided.
+        // We'll store them in an internal map.
+      }
+    } catch (err) {
       // Index doesn't exist yet, start fresh
     }
   }
 
   async save(): Promise<void> {
     if (!this.dirty) return;
-    await writeFile(this.indexPath, JSON.stringify(this.index.toJSON()));
+
+    // MiniSearch toJSON returns the index object.
+    // We'll wrap it to potentially include more metadata in the future.
+    const data = {
+      index: this.index.toJSON(),
+      // We don't strictly need to store documents if we only use them for removeByFile
+      // during the same session, but for full robustness we could.
+      // However, to keep the file small and since it's a cache, we'll just save the index.
+    };
+
+    await writeFile(this.indexPath, JSON.stringify(data));
     this.dirty = false;
   }
 
   add(chunks: MemoryChunk[]): void {
     if (chunks.length === 0) return;
-    
-    // MiniSearch requires unique IDs. We use the same ID as Qdrant.
+
     const docs = chunks.map((c) => ({
       id: c.id,
       file: c.file,
       startLine: c.startLine,
       endLine: c.endLine,
       text: c.text,
-      source: c.file.startsWith("captured/") ? "captured" : c.file.startsWith("vault/") ? "vault" : "workspace",
+      source: c.file.startsWith("captured/")
+        ? "captured"
+        : c.file.startsWith("vault/")
+          ? "vault"
+          : "workspace",
     }));
 
     this.index.addAll(docs);
@@ -447,42 +472,30 @@ export class TextIndex {
   }
 
   removeByFile(file: string): void {
-    // MiniSearch doesn't support delete by query nicely, we filter.
-    // Actually, we can search by file and remove IDs.
-    // Or just filter the document list. 
-    // Optimization: Since we reindex files, we can just remove all docs with this file.
-    // MiniSearch `discard` is deprecated, use `remove`.
-    // We need to find IDs first.
-    // Since MiniSearch is in-memory, we can iterate if needed, but search is faster.
-    
-    // Hack: searching for the exact filename might work if tokenized correctly.
-    // Better: We track IDs? No.
-    // Let's iterate. MiniSearch exposes `documentCount`.
-    // Actually, maybe we just use `discard` logic manually?
-    // It's safer to just rely on unique IDs overwrite? 
-    // MiniSearch `add` with same ID updates the doc? Yes, "If the document ID already exists, it is updated."
-    // BUT if the file shrunk, we have orphan chunks.
-    // We should remove all chunks for this file.
-    
-    // We can filter `this.index.documentIds`
-    // This might be slow for massive vaults.
-    // Ideally we store a map of File -> [IDs].
-    // For now, let's assume `add` overwrites enough, and we accept some orphans until full reindex?
-    // No, orphans are bad for search.
-    // Let's implement a removal scan.
-    
-    // MiniSearch internal `_documentIds` is private.
-    // We can use a separate map in this class?
-    // Yes, let's keep a simple Map<File, Set<ID>>.
-    // But persistence? The map needs to be saved too? 
-    // That complicates things.
-    
-    // Alternative: Just search for `file` field?
-    // If we index `file` as a field (we did), we can search it.
-    const results = this.index.search(file, { fields: ["file"], combineWith: "AND" });
-    const toRemove = results.filter((r: any) => r.file === file);
-    toRemove.forEach((r: any) => this.index.remove(r.id));
-    if (toRemove.length > 0) this.dirty = true;
+    // MiniSearch doesn't have an easy way to remove by field.
+    // We search for the file path in the 'file' field.
+    // We use a strict search if possible, or just filter results.
+    const results = this.index.search(file, {
+      fields: ["file"],
+      combineWith: "AND",
+    });
+
+    let removed = false;
+    for (const res of results) {
+      // Check for exact match to avoid issues with paths being tokens
+      if (res.file === file) {
+        try {
+          this.index.remove(res);
+          removed = true;
+        } catch {
+          // Document might not be in the index or already removed
+        }
+      }
+    }
+
+    if (removed) {
+      this.dirty = true;
+    }
   }
 
   search(query: string, limit: number): any[] {
@@ -504,7 +517,7 @@ export class QdrantClient {
     const collections = await this.fetch<{ result: { collections: Array<{ name: string }> } }>(
       "/collections",
     );
-    
+
     const exists = collections.result.collections.some((c) => c.name === this.collection);
     if (exists) return;
 
@@ -668,11 +681,12 @@ export class QdrantClient {
       endLine: hit.payload.endLine,
       snippet: truncateSnippet(hit.payload.text),
       score: hit.score,
-      source: hit.payload.source === "captured" 
-        ? "captured" 
-        : hit.payload.file.startsWith("vault/") 
-          ? "vault" 
-          : "workspace",
+      source:
+        hit.payload.source === "captured"
+          ? "captured"
+          : hit.payload.file.startsWith("vault/")
+            ? "vault"
+            : "workspace",
     }));
   }
 
@@ -880,13 +894,13 @@ export async function indexFile(
 
 export async function findMarkdownFiles(dir: string): Promise<string[]> {
   const files: string[] = [];
-  
+
   try {
     const entries = await readdir(dir, { withFileTypes: true });
-    
+
     for (const entry of entries) {
       const fullPath = join(dir, entry.name);
-      
+
       if (entry.isDirectory()) {
         files.push(...(await findMarkdownFiles(fullPath)));
       } else if (entry.isFile() && entry.name.endsWith(".md")) {
@@ -896,7 +910,7 @@ export async function findMarkdownFiles(dir: string): Promise<string[]> {
   } catch (err) {
     // Ignore permission errors, missing dirs
   }
-  
+
   return files;
 }
 
@@ -937,7 +951,8 @@ export function truncateSnippet(text: string, maxChars = 700): string {
 const memoryQdrantPlugin = {
   id: "memory-qdrant",
   name: "Memory (Qdrant + Ollama)",
-  description: "Local memory search with Qdrant vector DB, Ollama embeddings, Obsidian vault support, auto-recall and auto-capture",
+  description:
+    "Local memory search with Qdrant vector DB, Ollama embeddings, Obsidian vault support, auto-recall and auto-capture",
   kind: "memory" as const,
   configSchema: {
     type: "object",
@@ -968,7 +983,7 @@ const memoryQdrantPlugin = {
   register(api: OpenClawPluginApi) {
     const workspaceDir = api.workspaceDir || process.cwd();
     const cfg = parseConfig(api.pluginConfig, workspaceDir);
-    
+
     const resolvedVaultPath = api.resolvePath(cfg.vaultPath);
     const resolvedWorkspacePath = api.resolvePath(cfg.workspacePath);
 
@@ -1026,7 +1041,14 @@ const memoryQdrantPlugin = {
         const memoryMd = join(resolvedWorkspacePath, "MEMORY.md");
         try {
           await stat(memoryMd);
-          totalChunks += await indexFile(memoryMd, "MEMORY.md", qdrant, embeddings, textIndex, knowledgeGraph);
+          totalChunks += await indexFile(
+            memoryMd,
+            "MEMORY.md",
+            qdrant,
+            embeddings,
+            textIndex,
+            knowledgeGraph,
+          );
         } catch {
           // MEMORY.md doesn't exist yet
         }
@@ -1140,7 +1162,8 @@ const memoryQdrantPlugin = {
             const vectorResults = await qdrant.search(vector, maxResults, minScore);
 
             const textHits = textIndex.search(query, Math.max(maxResults * 4, 10));
-            const maxTextScore = textHits.reduce((max, hit) => Math.max(max, hit.score || 0), 0) || 1;
+            const maxTextScore =
+              textHits.reduce((max, hit) => Math.max(max, hit.score || 0), 0) || 1;
 
             const textResults: MemorySearchResult[] = textHits.map((hit: any) => ({
               id: String(hit.id),
@@ -1149,13 +1172,22 @@ const memoryQdrantPlugin = {
               endLine: hit.endLine ?? 1,
               snippet: truncateSnippet(hit.text || ""),
               score: (hit.score || 0) / maxTextScore,
-              source: hit.source || (hit.file?.startsWith("vault/") ? "vault" : hit.file?.startsWith("captured/") ? "captured" : "workspace"),
+              source:
+                hit.source ||
+                (hit.file?.startsWith("vault/")
+                  ? "vault"
+                  : hit.file?.startsWith("captured/")
+                    ? "captured"
+                    : "workspace"),
             }));
 
             const vectorWeight = 0.7;
             const textWeight = 0.3;
 
-            const merged = new Map<string, { res: MemorySearchResult; vectorScore?: number; textScore?: number }>();
+            const merged = new Map<
+              string,
+              { res: MemorySearchResult; vectorScore?: number; textScore?: number }
+            >();
 
             for (const r of vectorResults) {
               merged.set(r.id, { res: r, vectorScore: r.score });
@@ -1175,7 +1207,7 @@ const memoryQdrantPlugin = {
                 // Enrich with related links (Graph)
                 const related = knowledgeGraph.getRelated(res.file);
                 const relatedFiles = [...related.links, ...related.backlinks].slice(0, 3);
-                
+
                 return {
                   ...res,
                   score: (vectorScore ?? 0) * vectorWeight + (textScore ?? 0) * textWeight,
@@ -1358,9 +1390,7 @@ const memoryQdrantPlugin = {
             const meta = `- Exported: ${now.toISOString()}\n- Count: ${items.length}\n\n`;
             const body = items
               .map((item) => {
-                const date = item.capturedAt
-                  ? new Date(item.capturedAt).toISOString()
-                  : "";
+                const date = item.capturedAt ? new Date(item.capturedAt).toISOString() : "";
                 return `- **${item.category}** (${date}) ${item.text}`;
               })
               .join("\n");
@@ -1381,32 +1411,32 @@ const memoryQdrantPlugin = {
       {
         name: "memory_organize",
         label: "Memory Organize",
-        description: "Analyze the vault for orphaned files and suggest improvements. Uses Graph Knowledge to find notes with no backlinks.",
+        description:
+          "Analyze the vault for orphaned files and suggest improvements. Uses Graph Knowledge to find notes with no backlinks.",
         parameters: MemoryOrganizeSchema,
         execute: async (_toolCallId, params) => {
           const dryRun = params.dryRun !== false;
-          
+
           try {
             // Find orphans (files with no backlinks)
             // We iterate all nodes in the graph
             // Since knowledgeGraph is private, we need to expose a method or iterate manually if we exported it
             // Ah, KnowledgeGraph is a class in this module, we can add a method there.
-            
+
             // Let's add getOrphans to KnowledgeGraph class first (I'll do that in a separate edit block to keep this clean)
             // For now, assume it exists
             const orphans = knowledgeGraph.getOrphans();
-            
+
             // Filter out daily notes (they naturally might not have backlinks initially)
             // Assuming daily notes are in "01 Journal/Daily" or "memory/"
-            const meaningfulOrphans = orphans.filter(f => 
-              !f.includes("01 Journal/") && 
-              !f.includes("memory/") && 
-              !f.includes("captured/")
+            const meaningfulOrphans = orphans.filter(
+              (f) =>
+                !f.includes("01 Journal/") && !f.includes("memory/") && !f.includes("captured/"),
             );
 
             // In a real implementation, we could ask the LLM to suggest links or move files
             // For this first version, we just report them.
-            
+
             return jsonResult({
               orphans: meaningfulOrphans,
               count: meaningfulOrphans.length,
@@ -1433,21 +1463,18 @@ const memoryQdrantPlugin = {
 
         try {
           const vector = await embeddings.embed(event.prompt);
-          const results = await qdrant.search(
-            vector, 
-            cfg.autoRecallLimit, 
-            cfg.autoRecallMinScore
-          );
+          const results = await qdrant.search(vector, cfg.autoRecallLimit, cfg.autoRecallMinScore);
 
           if (results.length === 0) return;
 
           const memoryContext = results
-            .map((r) => `- [${r.source}/${r.file}] ${r.snippet.slice(0, 200)}${r.snippet.length > 200 ? "..." : ""}`)
+            .map(
+              (r) =>
+                `- [${r.source}/${r.file}] ${r.snippet.slice(0, 200)}${r.snippet.length > 200 ? "..." : ""}`,
+            )
             .join("\n");
 
-          api.logger.info(
-            `memory-qdrant: auto-recall injecting ${results.length} memories`,
-          );
+          api.logger.info(`memory-qdrant: auto-recall injecting ${results.length} memories`);
 
           return {
             prependContext: `<relevant-memories>\nThe following memories may be relevant:\n${memoryContext}\n</relevant-memories>\n\n`,
@@ -1489,10 +1516,14 @@ const memoryQdrantPlugin = {
           // Check for duplicates
           const dup = await qdrant.searchForDuplicates(vector, cfg.autoCaptureDupThreshold);
           if (dup.error) {
-            api.logger.warn(`memory-qdrant: duplicate check failed (proceeding anyway): ${dup.error}`);
+            api.logger.warn(
+              `memory-qdrant: duplicate check failed (proceeding anyway): ${dup.error}`,
+            );
           }
           if (dup.exists) {
-            api.logger.info(`memory-qdrant: skipping duplicate (${dup.score.toFixed(2)}): ${text.slice(0, 50)}...`);
+            api.logger.info(
+              `memory-qdrant: skipping duplicate (${dup.score.toFixed(2)}): ${text.slice(0, 50)}...`,
+            );
             return;
           }
 
@@ -1523,7 +1554,7 @@ const memoryQdrantPlugin = {
         const features = [];
         if (cfg.autoRecall) features.push("auto-recall");
         if (cfg.autoCapture) features.push("auto-capture");
-        
+
         api.logger.info(
           `memory-qdrant: initialized (vault: ${resolvedVaultPath}, collection: ${cfg.collection}, features: [${features.join(", ") || "none"}])`,
         );
