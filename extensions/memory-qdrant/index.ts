@@ -378,6 +378,16 @@ export class KnowledgeGraph {
     if (!node) return { links: [], backlinks: [] };
     return { links: node.links, backlinks: node.backlinks };
   }
+
+  getOrphans(): string[] {
+    const orphans: string[] = [];
+    for (const [file, node] of this.nodes) {
+      if (node.backlinks.length === 0) {
+        orphans.push(file);
+      }
+    }
+    return orphans;
+  }
 }
 
 // ============================================================================
@@ -1109,6 +1119,10 @@ const memoryQdrantPlugin = {
       title: Type.Optional(Type.String()),
     });
 
+    const MemoryOrganizeSchema = Type.Object({
+      dryRun: Type.Optional(Type.Boolean()),
+    });
+
     api.registerTool(
       {
         name: "memory_search",
@@ -1361,6 +1375,49 @@ const memoryQdrantPlugin = {
         },
       },
       { names: ["memory_captured_export"] },
+    );
+
+    api.registerTool(
+      {
+        name: "memory_organize",
+        label: "Memory Organize",
+        description: "Analyze the vault for orphaned files and suggest improvements. Uses Graph Knowledge to find notes with no backlinks.",
+        parameters: MemoryOrganizeSchema,
+        execute: async (_toolCallId, params) => {
+          const dryRun = params.dryRun !== false;
+          
+          try {
+            // Find orphans (files with no backlinks)
+            // We iterate all nodes in the graph
+            // Since knowledgeGraph is private, we need to expose a method or iterate manually if we exported it
+            // Ah, KnowledgeGraph is a class in this module, we can add a method there.
+            
+            // Let's add getOrphans to KnowledgeGraph class first (I'll do that in a separate edit block to keep this clean)
+            // For now, assume it exists
+            const orphans = knowledgeGraph.getOrphans();
+            
+            // Filter out daily notes (they naturally might not have backlinks initially)
+            // Assuming daily notes are in "01 Journal/Daily" or "memory/"
+            const meaningfulOrphans = orphans.filter(f => 
+              !f.includes("01 Journal/") && 
+              !f.includes("memory/") && 
+              !f.includes("captured/")
+            );
+
+            // In a real implementation, we could ask the LLM to suggest links or move files
+            // For this first version, we just report them.
+            
+            return jsonResult({
+              orphans: meaningfulOrphans,
+              count: meaningfulOrphans.length,
+              note: "These files have no incoming links. Consider linking them from an Index note.",
+            });
+          } catch (err) {
+            return jsonResult({ error: String(err) });
+          }
+        },
+      },
+      { names: ["memory_organize"] },
     );
 
     // ========================================================================

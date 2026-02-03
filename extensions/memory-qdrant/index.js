@@ -268,6 +268,15 @@ class KnowledgeGraph {
     if (!node) return { links: [], backlinks: [] };
     return { links: node.links, backlinks: node.backlinks };
   }
+  getOrphans() {
+    const orphans = [];
+    for (const [file, node] of this.nodes) {
+      if (node.backlinks.length === 0) {
+        orphans.push(file);
+      }
+    }
+    return orphans;
+  }
 }
 class TextIndex {
   index;
@@ -779,6 +788,9 @@ const memoryQdrantPlugin = {
       limit: import_typebox.Type.Optional(import_typebox.Type.Number()),
       title: import_typebox.Type.Optional(import_typebox.Type.String())
     });
+    const MemoryOrganizeSchema = import_typebox.Type.Object({
+      dryRun: import_typebox.Type.Optional(import_typebox.Type.Boolean())
+    });
     api.registerTool(
       {
         name: "memory_search",
@@ -997,6 +1009,31 @@ const memoryQdrantPlugin = {
         }
       },
       { names: ["memory_captured_export"] }
+    );
+    api.registerTool(
+      {
+        name: "memory_organize",
+        label: "Memory Organize",
+        description: "Analyze the vault for orphaned files and suggest improvements. Uses Graph Knowledge to find notes with no backlinks.",
+        parameters: MemoryOrganizeSchema,
+        execute: async (_toolCallId, params) => {
+          const dryRun = params.dryRun !== false;
+          try {
+            const orphans = knowledgeGraph.getOrphans();
+            const meaningfulOrphans = orphans.filter(
+              (f) => !f.includes("01 Journal/") && !f.includes("memory/") && !f.includes("captured/")
+            );
+            return (0, import_plugin_sdk.jsonResult)({
+              orphans: meaningfulOrphans,
+              count: meaningfulOrphans.length,
+              note: "These files have no incoming links. Consider linking them from an Index note."
+            });
+          } catch (err) {
+            return (0, import_plugin_sdk.jsonResult)({ error: String(err) });
+          }
+        }
+      },
+      { names: ["memory_organize"] }
     );
     if (cfg.autoRecall) {
       api.on("before_agent_start", async (event) => {
