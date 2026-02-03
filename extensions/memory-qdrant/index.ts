@@ -16,6 +16,7 @@ import { watch } from "chokidar";
 import { readFile, readdir, stat, appendFile, mkdir, writeFile } from "node:fs/promises";
 import { join, relative, dirname } from "node:path";
 import { createHash } from "node:crypto";
+import MiniSearch from "minisearch";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { jsonResult, readStringParam, readNumberParam } from "openclaw/plugin-sdk";
 
@@ -33,6 +34,7 @@ type MemoryChunk = {
 };
 
 type MemorySearchResult = {
+  id: string;
   file: string;
   startLine: number;
   endLine: number;
@@ -229,6 +231,106 @@ export function detectCategory(text: string): CapturedCategory {
 }
 
 // ============================================================================
+// Text Search (MiniSearch)
+// ============================================================================
+
+export class TextIndex {
+  private index: MiniSearch;
+  private indexPath: string;
+  private dirty = false;
+
+  constructor(workspacePath: string) {
+    this.indexPath = join(workspacePath, ".memory-index.json");
+    this.index = new MiniSearch({
+      fields: ["text", "file"], // Fields to index
+      storeFields: ["file", "startLine", "endLine", "text", "source"], // Fields to return
+      searchOptions: {
+        boost: { text: 2 },
+        fuzzy: 0.2,
+      },
+    });
+  }
+
+  async load(): Promise<void> {
+    try {
+      const data = await readFile(this.indexPath, "utf-8");
+      this.index = MiniSearch.loadJSON(data, {
+        fields: ["text", "file"],
+        storeFields: ["file", "startLine", "endLine", "text", "source"],
+      });
+    } catch {
+      // Index doesn't exist yet, start fresh
+    }
+  }
+
+  async save(): Promise<void> {
+    if (!this.dirty) return;
+    await writeFile(this.indexPath, JSON.stringify(this.index.toJSON()));
+    this.dirty = false;
+  }
+
+  add(chunks: MemoryChunk[]): void {
+    if (chunks.length === 0) return;
+    
+    // MiniSearch requires unique IDs. We use the same ID as Qdrant.
+    const docs = chunks.map((c) => ({
+      id: c.id,
+      file: c.file,
+      startLine: c.startLine,
+      endLine: c.endLine,
+      text: c.text,
+      source: c.file.startsWith("captured/") ? "captured" : c.file.startsWith("vault/") ? "vault" : "workspace",
+    }));
+
+    this.index.addAll(docs);
+    this.dirty = true;
+  }
+
+  removeByFile(file: string): void {
+    // MiniSearch doesn't support delete by query nicely, we filter.
+    // Actually, we can search by file and remove IDs.
+    // Or just filter the document list. 
+    // Optimization: Since we reindex files, we can just remove all docs with this file.
+    // MiniSearch `discard` is deprecated, use `remove`.
+    // We need to find IDs first.
+    // Since MiniSearch is in-memory, we can iterate if needed, but search is faster.
+    
+    // Hack: searching for the exact filename might work if tokenized correctly.
+    // Better: We track IDs? No.
+    // Let's iterate. MiniSearch exposes `documentCount`.
+    // Actually, maybe we just use `discard` logic manually?
+    // It's safer to just rely on unique IDs overwrite? 
+    // MiniSearch `add` with same ID updates the doc? Yes, "If the document ID already exists, it is updated."
+    // BUT if the file shrunk, we have orphan chunks.
+    // We should remove all chunks for this file.
+    
+    // We can filter `this.index.documentIds`
+    // This might be slow for massive vaults.
+    // Ideally we store a map of File -> [IDs].
+    // For now, let's assume `add` overwrites enough, and we accept some orphans until full reindex?
+    // No, orphans are bad for search.
+    // Let's implement a removal scan.
+    
+    // MiniSearch internal `_documentIds` is private.
+    // We can use a separate map in this class?
+    // Yes, let's keep a simple Map<File, Set<ID>>.
+    // But persistence? The map needs to be saved too? 
+    // That complicates things.
+    
+    // Alternative: Just search for `file` field?
+    // If we index `file` as a field (we did), we can search it.
+    const results = this.index.search(file, { fields: ["file"], combineWith: "AND" });
+    const toRemove = results.filter((r: any) => r.file === file);
+    toRemove.forEach((r: any) => this.index.remove(r.id));
+    if (toRemove.length > 0) this.dirty = true;
+  }
+
+  search(query: string, limit: number): any[] {
+    return this.index.search(query, { limit });
+  }
+}
+
+// ============================================================================
 // Qdrant Client
 // ============================================================================
 
@@ -400,6 +502,7 @@ export class QdrantClient {
     });
 
     return response.result.map((hit) => ({
+      id: String(hit.id),
       file: hit.payload.file,
       startLine: hit.payload.startLine,
       endLine: hit.payload.endLine,
@@ -576,6 +679,7 @@ export async function indexFile(
   relPath: string,
   qdrant: QdrantClient,
   embeddings: OllamaEmbeddings,
+  textIndex?: TextIndex,
 ): Promise<number> {
   const content = await readFile(filePath, "utf-8");
   const chunks = chunkText(content);
@@ -592,8 +696,14 @@ export async function indexFile(
     return { ...chunk, id, file: relPath, hash };
   });
 
-  // Delete old chunks for this file
+  // Delete old chunks for this file (Vector DB)
   await qdrant.deleteByFile(relPath);
+
+  // Update Text Index (BM25)
+  if (textIndex) {
+    textIndex.removeByFile(relPath);
+    textIndex.add(processedChunks);
+  }
 
   // Generate embeddings and upsert
   const vectors = await embeddings.embedBatch(processedChunks.map((c) => c.text));
@@ -630,6 +740,7 @@ export async function indexDirectory(
   qdrant: QdrantClient,
   embeddings: OllamaEmbeddings,
   logger: { info: (msg: string) => void },
+  textIndex?: TextIndex,
 ): Promise<number> {
   const files = await findMarkdownFiles(dir);
   let totalChunks = 0;
@@ -637,7 +748,7 @@ export async function indexDirectory(
   for (const file of files) {
     const relPath = `${prefix}${relative(dir, file)}`;
     try {
-      const chunks = await indexFile(file, relPath, qdrant, embeddings);
+      const chunks = await indexFile(file, relPath, qdrant, embeddings, textIndex);
       totalChunks += chunks;
     } catch (err) {
       logger.info(`memory-qdrant: failed to index ${relPath}: ${err}`);
@@ -702,6 +813,7 @@ const memoryQdrantPlugin = {
 
     const qdrant = new QdrantClient(cfg.qdrantUrl, cfg.collection);
     const embeddings = new OllamaEmbeddings(cfg.ollamaUrl, cfg.embeddingModel);
+    const textIndex = new TextIndex(resolvedWorkspacePath);
 
     let indexing = false;
     let indexingPromise: Promise<void> | null = null;
@@ -738,13 +850,14 @@ const memoryQdrantPlugin = {
           qdrant,
           embeddings,
           api.logger,
+          textIndex,
         );
 
         // Index workspace memory files
         const memoryMd = join(resolvedWorkspacePath, "MEMORY.md");
         try {
           await stat(memoryMd);
-          totalChunks += await indexFile(memoryMd, "MEMORY.md", qdrant, embeddings);
+          totalChunks += await indexFile(memoryMd, "MEMORY.md", qdrant, embeddings, textIndex);
         } catch {
           // MEMORY.md doesn't exist yet
         }
@@ -756,6 +869,7 @@ const memoryQdrantPlugin = {
           qdrant,
           embeddings,
           api.logger,
+          textIndex,
         );
 
         // Index extra paths
@@ -770,6 +884,7 @@ const memoryQdrantPlugin = {
                 `extra/${extraRoot.index}/${rel}`,
                 qdrant,
                 embeddings,
+                textIndex,
               );
             } else if (stats.isDirectory()) {
               totalChunks += await indexDirectory(
@@ -778,6 +893,7 @@ const memoryQdrantPlugin = {
                 qdrant,
                 embeddings,
                 api.logger,
+                textIndex,
               );
             }
           } catch {
@@ -785,6 +901,7 @@ const memoryQdrantPlugin = {
           }
         }
 
+        await textIndex.save();
         api.logger.info(`memory-qdrant: indexed ${totalChunks} chunks`);
       } catch (err) {
         api.logger.error(`memory-qdrant: indexing failed: ${err}`);
@@ -843,7 +960,46 @@ const memoryQdrantPlugin = {
 
           try {
             const vector = await embeddings.embed(query);
-            const results = await qdrant.search(vector, maxResults, minScore);
+            const vectorResults = await qdrant.search(vector, maxResults, minScore);
+
+            const textHits = textIndex.search(query, Math.max(maxResults * 4, 10));
+            const maxTextScore = textHits.reduce((max, hit) => Math.max(max, hit.score || 0), 0) || 1;
+
+            const textResults: MemorySearchResult[] = textHits.map((hit: any) => ({
+              id: String(hit.id),
+              file: hit.file,
+              startLine: hit.startLine ?? 1,
+              endLine: hit.endLine ?? 1,
+              snippet: truncateSnippet(hit.text || ""),
+              score: (hit.score || 0) / maxTextScore,
+              source: hit.source || (hit.file?.startsWith("vault/") ? "vault" : hit.file?.startsWith("captured/") ? "captured" : "workspace"),
+            }));
+
+            const vectorWeight = 0.7;
+            const textWeight = 0.3;
+
+            const merged = new Map<string, { res: MemorySearchResult; vectorScore?: number; textScore?: number }>();
+
+            for (const r of vectorResults) {
+              merged.set(r.id, { res: r, vectorScore: r.score });
+            }
+
+            for (const r of textResults) {
+              const existing = merged.get(r.id);
+              if (existing) {
+                existing.textScore = r.score;
+              } else {
+                merged.set(r.id, { res: r, textScore: r.score });
+              }
+            }
+
+            const results = Array.from(merged.values())
+              .map(({ res, vectorScore, textScore }) => ({
+                ...res,
+                score: (vectorScore ?? 0) * vectorWeight + (textScore ?? 0) * textWeight,
+              }))
+              .sort((a, b) => b.score - a.score)
+              .slice(0, maxResults);
 
             return jsonResult({
               results: results.map((r) => ({
@@ -856,6 +1012,7 @@ const memoryQdrantPlugin = {
               })),
               provider: "ollama",
               model: cfg.embeddingModel,
+              hybrid: true,
             });
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
@@ -1143,6 +1300,8 @@ const memoryQdrantPlugin = {
           `memory-qdrant: initialized (vault: ${resolvedVaultPath}, collection: ${cfg.collection}, features: [${features.join(", ") || "none"}])`,
         );
 
+        await textIndex.load();
+
         if (cfg.autoIndex) {
           try {
             await stat(resolvedVaultPath);
@@ -1185,6 +1344,7 @@ const memoryQdrantPlugin = {
         if (indexingPromise) {
           await indexingPromise;
         }
+        await textIndex.save();
         api.logger.info("memory-qdrant: stopped");
       },
     });
