@@ -28,6 +28,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 var index_exports = {};
 __export(index_exports, {
+  KnowledgeGraph: () => KnowledgeGraph,
   OllamaEmbeddings: () => OllamaEmbeddings,
   QdrantClient: () => QdrantClient,
   TextIndex: () => TextIndex,
@@ -167,6 +168,106 @@ function detectCategory(text) {
     return "personal";
   }
   return "other";
+}
+class KnowledgeGraph {
+  nodes = /* @__PURE__ */ new Map();
+  graphPath;
+  dirty = false;
+  constructor(workspacePath) {
+    this.graphPath = (0, import_node_path.join)(workspacePath, ".memory-graph.json");
+  }
+  async load() {
+    try {
+      const data = await (0, import_promises.readFile)(this.graphPath, "utf-8");
+      const raw = JSON.parse(data);
+      this.nodes = new Map(Object.entries(raw));
+    } catch {
+    }
+  }
+  async save() {
+    if (!this.dirty) return;
+    const obj = Object.fromEntries(this.nodes);
+    await (0, import_promises.writeFile)(this.graphPath, JSON.stringify(obj, null, 2));
+    this.dirty = false;
+  }
+  extractLinks(text) {
+    const regex = /\[\[(.*?)\]\]/g;
+    const links = [];
+    let match;
+    while ((match = regex.exec(text)) !== null) {
+      const link = match[1].split("|")[0].trim();
+      if (link) links.push(link);
+    }
+    return links;
+  }
+  updateFile(file, text) {
+    const links = this.extractLinks(text);
+    const existing = this.nodes.get(file);
+    const oldLinks = existing ? existing.links : [];
+    this.nodes.set(file, {
+      file,
+      links,
+      backlinks: existing ? existing.backlinks : []
+    });
+    for (const oldLink of oldLinks) {
+      if (!links.includes(oldLink)) {
+        this.removeBacklink(oldLink, file);
+      }
+    }
+    for (const link of links) {
+      if (!oldLinks.includes(link)) {
+        this.addBacklink(link, file);
+      }
+    }
+    this.dirty = true;
+  }
+  addBacklink(target, source) {
+    const node = this.nodes.get(target) || { file: target, links: [], backlinks: [] };
+    if (!node.backlinks.includes(source)) {
+      node.backlinks.push(source);
+      this.nodes.set(target, node);
+    }
+  }
+  removeBacklink(target, source) {
+    const node = this.nodes.get(target);
+    if (node) {
+      node.backlinks = node.backlinks.filter((b) => b !== source);
+      this.nodes.set(target, node);
+    }
+  }
+  removeFile(file) {
+    const node = this.nodes.get(file);
+    if (!node) return;
+    for (const link of node.links) {
+      this.removeBacklink(link, file);
+    }
+    if (node.backlinks.length === 0) {
+      this.nodes.delete(file);
+    } else {
+      node.links = [];
+      this.nodes.set(file, node);
+    }
+    this.dirty = true;
+  }
+  getRelated(file) {
+    let node = this.nodes.get(file);
+    if (!node && file.endsWith(".md")) {
+      node = this.nodes.get(file.slice(0, -3));
+    }
+    if (!node) {
+      const basename = file.split("/").pop()?.replace(".md", "");
+      if (basename) {
+        for (const [key, value] of this.nodes) {
+          if (key === basename || key.endsWith("/" + basename)) {
+            node = value;
+            break;
+          }
+        }
+      }
+    }
+    if (!node) return { links: [], backlinks: [] };
+    return { links: node.links, backlinks: node.backlinks };
+  }
 }
 class TextIndex {
   index;
@@ -472,7 +573,7 @@ function chunkText(text, targetWords = 400, overlapWords = 80) {
   }
   return chunks;
 }
-async function indexFile(filePath, relPath, qdrant, embeddings, textIndex) {
+async function indexFile(filePath, relPath, qdrant, embeddings, textIndex, knowledgeGraph) {
   const content = await (0, import_promises.readFile)(filePath, "utf-8");
   const chunks = chunkText(content);
   if (chunks.length === 0) return 0;
@@ -485,6 +586,9 @@ async function indexFile(filePath, relPath, qdrant, embeddings, textIndex) {
   if (textIndex) {
     textIndex.removeByFile(relPath);
     textIndex.add(processedChunks);
+  }
+  if (knowledgeGraph) {
+    knowledgeGraph.updateFile(relPath, content);
   }
   const vectors = await embeddings.embedBatch(processedChunks.map((c) => c.text));
   await qdrant.upsert(processedChunks, vectors);
@@ -506,13 +610,13 @@ async function findMarkdownFiles(dir) {
   }
   return files;
 }
-async function indexDirectory(dir, prefix, qdrant, embeddings, logger, textIndex) {
+async function indexDirectory(dir, prefix, qdrant, embeddings, logger, textIndex, knowledgeGraph) {
   const files = await findMarkdownFiles(dir);
   let totalChunks = 0;
   for (const file of files) {
     const relPath = `${prefix}${(0, import_node_path.relative)(dir, file)}`;
     try {
-      const chunks = await indexFile(file, relPath, qdrant, embeddings, textIndex);
+      const chunks = await indexFile(file, relPath, qdrant, embeddings, textIndex, knowledgeGraph);
       totalChunks += chunks;
     } catch (err) {
       logger.info(`memory-qdrant: failed to index ${relPath}: ${err}`);
@@ -567,6 +671,7 @@ const memoryQdrantPlugin = {
     const qdrant = new QdrantClient(cfg.qdrantUrl, cfg.collection);
     const embeddings = new OllamaEmbeddings(cfg.ollamaUrl, cfg.embeddingModel);
     const textIndex = new TextIndex(resolvedWorkspacePath);
+    const knowledgeGraph = new KnowledgeGraph(resolvedWorkspacePath);
     let indexing = false;
     let indexingPromise = null;
     let fileWatcher = null;
@@ -592,12 +697,13 @@ const memoryQdrantPlugin = {
           qdrant,
           embeddings,
           api.logger,
-          textIndex
+          textIndex,
+          knowledgeGraph
         );
         const memoryMd = (0, import_node_path.join)(resolvedWorkspacePath, "MEMORY.md");
         try {
           await (0, import_promises.stat)(memoryMd);
-          totalChunks += await indexFile(memoryMd, "MEMORY.md", qdrant, embeddings, textIndex);
+          totalChunks += await indexFile(memoryMd, "MEMORY.md", qdrant, embeddings, textIndex, knowledgeGraph);
         } catch {
         }
         const memoryDir = (0, import_node_path.join)(resolvedWorkspacePath, "memory");
@@ -607,7 +713,8 @@ const memoryQdrantPlugin = {
           qdrant,
           embeddings,
           api.logger,
-          textIndex
+          textIndex,
+          knowledgeGraph
         );
         for (const extraRoot of extraRoots) {
           const resolved = extraRoot.resolved;
@@ -620,7 +727,8 @@ const memoryQdrantPlugin = {
                 `extra/${extraRoot.index}/${rel}`,
                 qdrant,
                 embeddings,
-                textIndex
+                textIndex,
+                knowledgeGraph
               );
             } else if (stats.isDirectory()) {
               totalChunks += await indexDirectory(
@@ -629,13 +737,15 @@ const memoryQdrantPlugin = {
                 qdrant,
                 embeddings,
                 api.logger,
-                textIndex
+                textIndex,
+                knowledgeGraph
               );
             }
           } catch {
           }
         }
         await textIndex.save();
+        await knowledgeGraph.save();
         api.logger.info(`memory-qdrant: indexed ${totalChunks} chunks`);
       } catch (err) {
         api.logger.error(`memory-qdrant: indexing failed: ${err}`);
@@ -707,10 +817,15 @@ const memoryQdrantPlugin = {
                 merged.set(r.id, { res: r, textScore: r.score });
               }
             }
-            const results = Array.from(merged.values()).map(({ res, vectorScore, textScore }) => ({
-              ...res,
-              score: (vectorScore ?? 0) * vectorWeight + (textScore ?? 0) * textWeight
-            })).sort((a, b) => b.score - a.score).slice(0, maxResults);
+            const results = Array.from(merged.values()).map(({ res, vectorScore, textScore }) => {
+              const related = knowledgeGraph.getRelated(res.file);
+              const relatedFiles = [...related.links, ...related.backlinks].slice(0, 3);
+              return {
+                ...res,
+                score: (vectorScore ?? 0) * vectorWeight + (textScore ?? 0) * textWeight,
+                related: relatedFiles.length > 0 ? relatedFiles : void 0
+              };
+            }).sort((a, b) => b.score - a.score).slice(0, maxResults);
             return (0, import_plugin_sdk.jsonResult)({
               results: results.map((r) => ({
                 file: r.file,
@@ -718,7 +833,8 @@ const memoryQdrantPlugin = {
                 endLine: r.endLine,
                 snippet: r.snippet,
                 score: r.score,
-                source: r.source
+                source: r.source,
+                related: r.related
               })),
               provider: "ollama",
               model: cfg.embeddingModel,
@@ -964,6 +1080,7 @@ ${memoryContext}
           `memory-qdrant: initialized (vault: ${resolvedVaultPath}, collection: ${cfg.collection}, features: [${features.join(", ") || "none"}])`
         );
         await textIndex.load();
+        await knowledgeGraph.load();
         if (cfg.autoIndex) {
           try {
             await (0, import_promises.stat)(resolvedVaultPath);
@@ -1001,6 +1118,7 @@ ${memoryContext}
           await indexingPromise;
         }
         await textIndex.save();
+        await knowledgeGraph.save();
         api.logger.info("memory-qdrant: stopped");
       }
     });
@@ -1009,6 +1127,7 @@ ${memoryContext}
 var index_default = memoryQdrantPlugin;
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
+  KnowledgeGraph,
   OllamaEmbeddings,
   QdrantClient,
   TextIndex,
