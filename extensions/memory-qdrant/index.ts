@@ -1175,9 +1175,19 @@ const memoryQdrantPlugin = {
           const minScore = readNumberParam(params, "minScore") ?? 0.5;
 
           try {
-            const vector = await embeddings.embed(query);
-            const vectorResults = await qdrant.search(vector, maxResults, minScore);
+            let vectorResults: MemorySearchResult[] = [];
+            let embeddingError: string | null = null;
 
+            // Try vector search (may fail if Ollama is down)
+            try {
+              const vector = await embeddings.embed(query);
+              vectorResults = await qdrant.search(vector, maxResults, minScore);
+            } catch (err) {
+              embeddingError = err instanceof Error ? err.message : String(err);
+              api.logger.warn(`memory-qdrant: vector search failed, falling back to text-only: ${embeddingError}`);
+            }
+
+            // Always do text search for robustness
             const textHits = textIndex.search(query, Math.max(maxResults * 4, 10));
             const maxTextScore =
               textHits.reduce((max, hit) => Math.max(max, hit.score || 0), 0) || 1;
@@ -1198,8 +1208,9 @@ const memoryQdrantPlugin = {
                     : "workspace"),
             }));
 
-            const vectorWeight = 0.7;
-            const textWeight = 0.3;
+            // If vector search failed, use text-only; otherwise blend both
+            const vectorWeight = embeddingError ? 0 : 0.7;
+            const textWeight = embeddingError ? 1 : 0.3;
 
             const merged = new Map<
               string,
@@ -1246,10 +1257,13 @@ const memoryQdrantPlugin = {
               })),
               provider: "ollama",
               model: cfg.embeddingModel,
-              hybrid: true,
+              hybrid: !embeddingError,
+              embeddingFailed: embeddingError ? true : undefined,
+              fallbackMode: embeddingError ? "text-only" : undefined,
             });
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
+            api.logger.error(`memory-qdrant: search error: ${message}`);
             return jsonResult({ results: [], disabled: false, error: message });
           }
         },
