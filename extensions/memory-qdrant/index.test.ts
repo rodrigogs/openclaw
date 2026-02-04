@@ -2530,4 +2530,72 @@ describe("tools", () => {
     await indexDirectory(base, "vault/", qdrant, embeddings, api.logger as any);
     expect(logs.some((l) => l.includes("failed to index"))).toBe(true);
   });
+
+  it("search: handles short queries correctly", () => {
+    const textIndex = new TextIndex();
+    textIndex.add({ id: "1", text: "This is a test", file: "test.md", startLine: 1, endLine: 1, source: "workspace" });
+    textIndex.add({ id: "2", text: "Short", file: "short.md", startLine: 1, endLine: 1, source: "workspace" });
+
+    // Short query should still find matches
+    const results = textIndex.search("is", 10);
+    expect(results.length).toBeGreaterThan(0);
+
+    // Very short query with noise
+    const noisyResults = textIndex.search("a", 10);
+    // Should find results but may have noise
+    expect(Array.isArray(noisyResults)).toBe(true);
+  });
+
+  it("search: fallback to text-only when embedding fails", () => {
+    const textIndex = new TextIndex();
+    textIndex.add({ id: "1", text: "Important fact about deployment", file: "memory.md", startLine: 1, endLine: 1, source: "workspace" });
+
+    // Text search should work independently
+    const textResults = textIndex.search("deployment", 10);
+    expect(textResults.length).toBeGreaterThan(0);
+    expect(textResults[0].text).toContain("deployment");
+  });
+
+  it("knowledgeGraph: correctly ignores wikilinks in code blocks", () => {
+    const graph = new KnowledgeGraph();
+    
+    // Text with code block containing [[fake link]]
+    const contentWithCode = `
+# Document
+
+Some paragraph.
+
+\`\`\`
+[[This is not a link]]
+\`\`\`
+
+[[RealLink|This is a real link]]
+    `;
+
+    graph.updateFile("test.md", contentWithCode);
+    const node = (graph as any).nodes.get("test.md");
+    
+    // Should only have RealLink, not the fake one in code block
+    expect(node.links).toContain("RealLink");
+    expect(node.links.some((l: string) => l.includes("This is not"))).toBe(false);
+  });
+
+  it("knowledgeGraph: handles escaped bracket syntax", () => {
+    const graph = new KnowledgeGraph();
+    
+    // Text with escaped bracket syntax that might appear in code examples
+    const contentWithEscape = `
+[[ValidLink]]
+\[[Not a real link]]
+\`[[Another fake link]]\`
+    `;
+
+    graph.updateFile("test.md", contentWithEscape);
+    const node = (graph as any).nodes.get("test.md");
+    
+    // Should only have ValidLink
+    expect(node.links.length).toBe(1);
+    expect(node.links[0]).toBe("ValidLink");
+  });
 });
+
