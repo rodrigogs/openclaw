@@ -2,6 +2,10 @@
  * Tests for memory-qdrant plugin
  */
 
+import { watch } from "chokidar";
+import { writeFile, mkdir, stat as statActual } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import memoryQdrantPlugin, {
   QdrantClient,
@@ -17,11 +21,6 @@ import memoryQdrantPlugin, {
   KnowledgeGraph,
   TextIndex,
 } from "./index.ts";
-
-import { watch } from "chokidar";
-import { writeFile, mkdir, stat as statActual } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 
 const watcherState = vi.hoisted(() => ({
   handlers: {} as Record<string, (path?: string) => void>,
@@ -59,9 +58,7 @@ vi.mock("chokidar", () => ({
 }));
 
 vi.mock("node:fs/promises", async () => {
-  const actual = await vi.importActual<typeof import("node:fs/promises")>(
-    "node:fs/promises",
-  );
+  const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
   return {
     ...actual,
     stat: vi.fn(actual.stat),
@@ -100,20 +97,20 @@ describe("shouldCapture", () => {
   describe("should capture", () => {
     it("explicit memory requests in English", () => {
       expect(shouldCapture("Remember that I prefer dark mode")).toBe(true);
-      expect(shouldCapture("Remind me that my login is foo")) .toBe(true);
-      expect(shouldCapture("Don't forget: my birthday is May 10")) .toBe(true);
-      expect(shouldCapture("Please remember that I like tea")) .toBe(true);
-      expect(shouldCapture("Note this: I live in Porto Alegre")) .toBe(true);
-      expect(shouldCapture("Save this: my email is test@example.com")) .toBe(true);
+      expect(shouldCapture("Remind me that my login is foo")).toBe(true);
+      expect(shouldCapture("Don't forget: my birthday is May 10")).toBe(true);
+      expect(shouldCapture("Please remember that I like tea")).toBe(true);
+      expect(shouldCapture("Note this: I live in Porto Alegre")).toBe(true);
+      expect(shouldCapture("Save this: my email is test@example.com")).toBe(true);
     });
 
     it("explicit memory requests in Portuguese", () => {
       expect(shouldCapture("Lembra que eu prefiro café sem açúcar")).toBe(true);
       expect(shouldCapture("Salva isso: meu email é teste@email.com")).toBe(true);
       expect(shouldCapture("Não esquece: meu aniversário é 25 de março")).toBe(true);
-      expect(shouldCapture("Nao esquecer: meu endereço é Rua X")) .toBe(true);
-      expect(shouldCapture("Memoriza que tenho 3 gatos")) .toBe(true);
-      expect(shouldCapture("Por favor lembra que prefiro reuniões à tarde")) .toBe(true);
+      expect(shouldCapture("Nao esquecer: meu endereço é Rua X")).toBe(true);
+      expect(shouldCapture("Memoriza que tenho 3 gatos")).toBe(true);
+      expect(shouldCapture("Por favor lembra que prefiro reuniões à tarde")).toBe(true);
     });
 
     it("preferences in English", () => {
@@ -129,7 +126,7 @@ describe("shouldCapture", () => {
     });
 
     it("decisions", () => {
-      expect(shouldCapture("We decided to use PostgreSQL")) .toBe(true);
+      expect(shouldCapture("We decided to use PostgreSQL")).toBe(true);
       expect(shouldCapture("Decidimos usar o framework Next.js")).toBe(true);
       expect(shouldCapture("I chose Python for this project")).toBe(true);
     });
@@ -165,8 +162,8 @@ describe("shouldCapture", () => {
   describe("should NOT capture", () => {
     it("very short text", () => {
       expect(shouldCapture("ok")).toBe(false);
-      expect(shouldCapture("sure")) .toBe(false);
-      expect(shouldCapture("hi there")) .toBe(false);
+      expect(shouldCapture("sure")).toBe(false);
+      expect(shouldCapture("hi there")).toBe(false);
     });
 
     it("very long text", () => {
@@ -175,14 +172,14 @@ describe("shouldCapture", () => {
     });
 
     it("questions", () => {
-      expect(shouldCapture("What do you prefer?")) .toBe(false);
-      expect(shouldCapture("Do you like coffee?")) .toBe(false);
+      expect(shouldCapture("What do you prefer?")).toBe(false);
+      expect(shouldCapture("Do you like coffee?")).toBe(false);
     });
 
     it("agent confirmations", () => {
-      expect(shouldCapture("Pronto!")) .toBe(false);
-      expect(shouldCapture("Done!")) .toBe(false);
-      expect(shouldCapture("Entendi, vou fazer isso")) .toBe(false);
+      expect(shouldCapture("Pronto!")).toBe(false);
+      expect(shouldCapture("Done!")).toBe(false);
+      expect(shouldCapture("Entendi, vou fazer isso")).toBe(false);
     });
 
     it("XML/tool output", () => {
@@ -190,7 +187,7 @@ describe("shouldCapture", () => {
     });
 
     it("code blocks", () => {
-      expect(shouldCapture("```typescript\nconst x = 1;\n```")) .toBe(false);
+      expect(shouldCapture("```typescript\nconst x = 1;\n```")).toBe(false);
     });
 
     it("multiple code blocks (non-greedy regex)", () => {
@@ -199,22 +196,24 @@ describe("shouldCapture", () => {
       // The code block exclusion should NOT swallow text between blocks
       // But since this contains code blocks, it should still be excluded
       expect(shouldCapture(multiBlock)).toBe(false);
-      
+
       // Pure text between would be captured if it has triggers
       expect(shouldCapture("I prefer dark mode")).toBe(true);
     });
 
     it("markdown lists", () => {
-      expect(shouldCapture("- Item 1\n- Item 2")) .toBe(false);
-      expect(shouldCapture("* First\n* Second")) .toBe(false);
+      expect(shouldCapture("- Item 1\n- Item 2")).toBe(false);
+      expect(shouldCapture("* First\n* Second")).toBe(false);
     });
 
     it("already injected memories", () => {
-      expect(shouldCapture("I prefer <relevant-memories>test</relevant-memories> this")).toBe(false);
+      expect(shouldCapture("I prefer <relevant-memories>test</relevant-memories> this")).toBe(
+        false,
+      );
     });
 
     it("emoji-heavy content", () => {
-      expect(shouldCapture("🎉🎉🎉🎉 Great job!")) .toBe(false);
+      expect(shouldCapture("🎉🎉🎉🎉 Great job!")).toBe(false);
     });
   });
 });
@@ -228,22 +227,22 @@ describe("detectCategory", () => {
     expect(detectCategory("I prefer dark mode")).toBe("preference");
     expect(detectCategory("Eu prefiro café")).toBe("preference");
     expect(detectCategory("I love TypeScript")).toBe("preference");
-    expect(detectCategory("I hate bugs")) .toBe("preference");
+    expect(detectCategory("I hate bugs")).toBe("preference");
   });
 
   it("detects projects", () => {
     expect(detectCategory("We decided to use React")).toBe("project");
-    expect(detectCategory("Decidimos usar PostgreSQL")) .toBe("project");
+    expect(detectCategory("Decidimos usar PostgreSQL")).toBe("project");
     expect(detectCategory("I chose this framework")).toBe("project");
     expect(detectCategory("Projeto de memória local")).toBe("project");
   });
 
   it("detects personal", () => {
     expect(detectCategory("My phone is +5511999887766")).toBe("personal");
-    expect(detectCategory("Email: test@example.com")) .toBe("personal");
-    expect(detectCategory("My name is John")) .toBe("personal");
-    expect(detectCategory("Me chamo Maria")) .toBe("personal");
-    expect(detectCategory("Eu moro em Porto Alegre")) .toBe("personal");
+    expect(detectCategory("Email: test@example.com")).toBe("personal");
+    expect(detectCategory("My name is John")).toBe("personal");
+    expect(detectCategory("Me chamo Maria")).toBe("personal");
+    expect(detectCategory("Eu moro em Porto Alegre")).toBe("personal");
   });
 
   it("returns other for unclassified", () => {
@@ -861,8 +860,14 @@ describe("hook handlers", () => {
 
     memoryQdrantPlugin.register(api as never);
 
-    await hooks.message_received({ content: null, from: "+5551" }, { sessionKey: "agent:main:main" });
-    await hooks.message_received({ content: 123, from: "+5551" }, { sessionKey: "agent:main:main" });
+    await hooks.message_received(
+      { content: null, from: "+5551" },
+      { sessionKey: "agent:main:main" },
+    );
+    await hooks.message_received(
+      { content: 123, from: "+5551" },
+      { sessionKey: "agent:main:main" },
+    );
 
     expect(mockFetch).not.toHaveBeenCalled();
   });
@@ -884,7 +889,10 @@ describe("hook handlers", () => {
 
     memoryQdrantPlugin.register(api as never);
 
-    await hooks.message_received({ content: "ok", from: "+5551" }, { sessionKey: "agent:main:main" });
+    await hooks.message_received(
+      { content: "ok", from: "+5551" },
+      { sessionKey: "agent:main:main" },
+    );
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
@@ -953,12 +961,19 @@ describe("extra coverage", () => {
   it("auto-capture enforces rate limit", async () => {
     const api = {
       workspaceDir: "/tmp",
-      pluginConfig: { vaultPath: "/tmp", autoCapture: true, autoCaptureWindowMs: 1000, autoCaptureMaxPerWindow: 2 },
+      pluginConfig: {
+        vaultPath: "/tmp",
+        autoCapture: true,
+        autoCaptureWindowMs: 1000,
+        autoCaptureMaxPerWindow: 2,
+      },
       resolvePath: (p: string) => p,
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
       registerTool: () => {},
       registerService: () => {},
-      on: (evt: string, cb: any) => { if (evt === "message_received") hook = cb; },
+      on: (evt: string, cb: any) => {
+        if (evt === "message_received") hook = cb;
+      },
     } as unknown;
 
     let hook: any;
@@ -976,7 +991,7 @@ describe("extra coverage", () => {
     // 3rd (blocked)
     await hook(msg, ctx);
 
-    // Should have logged rate limit or just returned? 
+    // Should have logged rate limit or just returned?
     // The code sets captureWindow but doesn't log on blocking.
     // We can verify by checking how many times qdrant.searchForDuplicates or similar was called?
     // qdrant.upsert is further down.
@@ -992,7 +1007,9 @@ describe("extra coverage", () => {
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
       registerTool: () => {},
       registerService: () => {},
-      on: (evt: string, cb: any) => { if (evt === "message_received") hook = cb; },
+      on: (evt: string, cb: any) => {
+        if (evt === "message_received") hook = cb;
+      },
     } as unknown;
 
     let hook: any;
@@ -1000,13 +1017,14 @@ describe("extra coverage", () => {
 
     // Mock embedding success
     mockFetch.mockImplementation(async (url: string) => {
-        if (url.includes("/api/embeddings")) return { ok: true, json: async () => ({ embedding: [0.1] }) } as any;
-        // Mock points search for duplicates to return error structure if possible?
-        // QdrantClient.searchForDuplicates implementation:
-        // if (!res.ok) return { exists: false, error: ... }
-        // So we mock fetch to fail for search
-        if (url.includes("/points/search")) return { ok: false, statusText: "Fail" } as any;
-        return { ok: true, json: async () => ({}) } as any;
+      if (url.includes("/api/embeddings"))
+        return { ok: true, json: async () => ({ embedding: [0.1] }) } as any;
+      // Mock points search for duplicates to return error structure if possible?
+      // QdrantClient.searchForDuplicates implementation:
+      // if (!res.ok) return { exists: false, error: ... }
+      // So we mock fetch to fail for search
+      if (url.includes("/points/search")) return { ok: false, statusText: "Fail" } as any;
+      return { ok: true, json: async () => ({}) } as any;
     });
 
     const msg = { content: "Remember this failure" };
@@ -1023,7 +1041,9 @@ describe("extra coverage", () => {
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
       registerTool: () => {},
       registerService: () => {},
-      on: (evt: string, cb: any) => { if (evt === "before_agent_start") hook = cb; },
+      on: (evt: string, cb: any) => {
+        if (evt === "before_agent_start") hook = cb;
+      },
     } as unknown;
 
     let hook: any;
@@ -1079,10 +1099,10 @@ describe("service start/stop", () => {
       workspaceDir: base,
       pluginConfig: { vaultPath: base, autoIndex: true },
       resolvePath: (p: string) => p,
-      logger: { 
-        info: (msg: string) => logs.push(`INFO: ${msg}`), 
-        warn: (msg: string) => logs.push(`WARN: ${msg}`), 
-        error: (msg: string) => logs.push(`ERROR: ${msg}`) 
+      logger: {
+        info: (msg: string) => logs.push(`INFO: ${msg}`),
+        warn: (msg: string) => logs.push(`WARN: ${msg}`),
+        error: (msg: string) => logs.push(`ERROR: ${msg}`),
       },
       registerTool: () => {},
       registerService: (svc: any) => services.push(svc),
@@ -1103,25 +1123,25 @@ describe("service start/stop", () => {
     });
 
     watcherState.reset();
-    
+
     // Ensure stat mock is set up BEFORE register
     const { stat } = await import("node:fs/promises");
     (stat as unknown as vi.Mock).mockImplementation(statActual);
-    
+
     memoryQdrantPlugin.register(api as never);
 
     await services[0].start();
-    
+
     // Wait for initial indexing to complete
-    await new Promise(r => setTimeout(r, 100));
-    
+    await new Promise((r) => setTimeout(r, 100));
+
     // Watcher creation is flaky in mock env; ensure no crash
     expect(true).toBe(true);
-    
+
     await services[0].stop();
-    
+
     // Verify stop completes without error
-    expect(logs.some(l => l.includes("stopped"))).toBe(true);
+    expect(logs.some((l) => l.includes("stopped"))).toBe(true);
   });
 
   it("watcher setup and cleanup", async () => {
@@ -1140,16 +1160,16 @@ describe("service start/stop", () => {
     } as unknown;
 
     mockFetch.mockResolvedValue({ ok: true, json: async () => ({}) } as any);
-    
+
     // Ensure stat mock returns success
     const { stat } = await import("node:fs/promises");
     (stat as unknown as vi.Mock).mockResolvedValue({ isDirectory: () => true } as any);
 
     memoryQdrantPlugin.register(api as never);
     await services[0].start();
-    
+
     expect(watcherState.watchCalled).toBe(true);
-    
+
     await services[0].stop();
     expect(watcherState.closeCalled).toBe(true);
   });
@@ -1173,13 +1193,16 @@ describe("service start/stop", () => {
 
     mockFetch.mockResolvedValue({ ok: true, json: async () => ({}) } as any);
     const { stat } = await import("node:fs/promises");
-    (stat as unknown as vi.Mock).mockResolvedValue({ isDirectory: () => true, isFile: () => false });
+    (stat as unknown as vi.Mock).mockResolvedValue({
+      isDirectory: () => true,
+      isFile: () => false,
+    });
 
     memoryQdrantPlugin.register(api as never);
     await services[0].start();
-    
+
     // Wait for indexing
-    await new Promise(r => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 100));
 
     expect(watcherState.watchCalled).toBe(true);
     await services[0].stop();
@@ -1201,11 +1224,11 @@ describe("service start/stop", () => {
     } as unknown;
 
     mockFetch.mockResolvedValue({ ok: true, json: async () => ({}) } as any);
-    
+
     memoryQdrantPlugin.register(api as never);
     await services[0].start();
-    await new Promise(r => setTimeout(r, 10)); // Wait for watcher creation
-    
+    await new Promise((r) => setTimeout(r, 10)); // Wait for watcher creation
+
     // Simulate events on mock watcher
     const watcher = watcherState.instances[0];
     if (watcher) {
@@ -1213,7 +1236,7 @@ describe("service start/stop", () => {
       watcher.emit("change", join(base, "change.md"));
       watcher.emit("unlink", join(base, "unlink.md"));
     }
-    
+
     await services[0].stop();
     expect(true).toBe(true);
   });
@@ -1234,7 +1257,11 @@ describe("service start/stop", () => {
 
     const api = {
       workspaceDir: base,
-      pluginConfig: { vaultPath: base, autoIndex: true, extraPaths: [extraDir, extraFile, join(base, "missing")] },
+      pluginConfig: {
+        vaultPath: base,
+        autoIndex: true,
+        extraPaths: [extraDir, extraFile, join(base, "missing")],
+      },
       resolvePath: (p: string) => p,
       logger: { info: () => {}, warn: () => {}, error: () => {} },
       registerTool: () => {},
@@ -1381,35 +1408,43 @@ describe("service start/stop", () => {
     } as unknown;
 
     mockFetch.mockImplementation(async (url: string) => {
-      if (url.includes("/api/embeddings")) return { ok: true, json: async () => ({ embedding: [0.1] }) } as any;
-      if (url.includes("/collections")) return { ok: true, json: async () => ({ result: { collections: [{ name: "openclaw-memory" }] } }) } as any;
+      if (url.includes("/api/embeddings"))
+        return { ok: true, json: async () => ({ embedding: [0.1] }) } as any;
+      if (url.includes("/collections"))
+        return {
+          ok: true,
+          json: async () => ({ result: { collections: [{ name: "openclaw-memory" }] } }),
+        } as any;
       return { ok: true, json: async () => ({}) } as any;
     });
 
     const { stat } = await import("node:fs/promises");
-    (stat as unknown as vi.Mock).mockResolvedValue({ isDirectory: () => true, isFile: () => false });
+    (stat as unknown as vi.Mock).mockResolvedValue({
+      isDirectory: () => true,
+      isFile: () => false,
+    });
 
     memoryQdrantPlugin.register(api as never);
     await services[0].start();
-    
+
     // Initial indexing starts immediately. Clear logs to test watcher debounce.
     await vi.runAllTicks();
     logs.length = 0;
-    
+
     const watcher = watcherState.instances[0];
     // Trigger events
     watcher.emit("add", join(base, "a.md"));
-    
+
     // Fast forward partially
     vi.advanceTimersByTime(1000);
-    expect(logs.some(l => l.includes("indexing started"))).toBe(false);
+    expect(logs.some((l) => l.includes("indexing started"))).toBe(false);
 
     // Fast forward past debounce (1500ms)
     vi.advanceTimersByTime(1000);
-    
+
     // Flush promises
     vi.useRealTimers();
-    await new Promise(r => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 100));
 
     expect(true).toBe(true);
     await services[0].stop();
@@ -1438,7 +1473,7 @@ describe("service start/stop", () => {
     (stat as unknown as vi.Mock).mockRejectedValue(new Error("Stat failed"));
 
     await services[0].start();
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 50));
     await services[0].stop();
     expect(true).toBe(true);
   });
@@ -1463,7 +1498,9 @@ describe("memory_organize tool", () => {
       pluginConfig: { vaultPath: base, autoIndex: false },
       resolvePath: (p: string) => p,
       logger: { info: () => {}, warn: () => {}, error: () => {} },
-      registerTool: (tool: any) => { tools[tool.name] = tool; },
+      registerTool: (tool: any) => {
+        tools[tool.name] = tool;
+      },
       registerService: (svc: any) => services.push(svc),
       on: () => {},
     } as unknown;
@@ -1496,17 +1533,21 @@ describe("memory_organize tool", () => {
     } as unknown;
 
     const tools: any = {};
-    (api as any).registerTool = (t: any) => { tools[t.name] = t; };
+    (api as any).registerTool = (t: any) => {
+      tools[t.name] = t;
+    };
 
     memoryQdrantPlugin.register(api as never);
     await services[0].start();
 
     // Mock graph.getOrphans to throw
-    const spy = vi.spyOn(KnowledgeGraph.prototype, "getOrphans").mockImplementation(() => { throw new Error("Graph failed"); });
+    const spy = vi.spyOn(KnowledgeGraph.prototype, "getOrphans").mockImplementation(() => {
+      throw new Error("Graph failed");
+    });
 
     const res = await tools.memory_organize.execute("", {});
     expect(res.details.error).toContain("Graph failed");
-    
+
     spy.mockRestore();
     await services[0].stop();
   });
@@ -1748,20 +1789,20 @@ describe("TextIndex (MiniSearch)", () => {
   it("indexes and searches text", async () => {
     const base = join(tmpdir(), `memory-qdrant-test-${Date.now()}`);
     await mkdir(base, { recursive: true });
-    
+
     const index = new TextIndex(base);
-    
+
     index.add([
       { id: "1", file: "a.md", startLine: 1, endLine: 1, text: "foo bar", hash: "1" },
       { id: "2", file: "b.md", startLine: 1, endLine: 1, text: "bar baz", hash: "2" },
     ]);
-    
+
     const results = index.search("foo", 10);
     expect(results).toHaveLength(1);
     expect(results[0].id).toBe("1");
-    
+
     await index.save();
-    
+
     const index2 = new TextIndex(base);
     await index2.load();
     const results2 = index2.search("baz", 10);
@@ -1772,11 +1813,21 @@ describe("TextIndex (MiniSearch)", () => {
   it("load handles existing index data", async () => {
     const base = join(tmpdir(), `memory-qdrant-load-test-${Date.now()}`);
     await mkdir(base, { recursive: true });
-    
+
     // Create a mock index file in old format
-    const oldData = { documentCount: 0, fieldLength: {}, averageFieldLength: {}, documents: {}, fieldVectors: {}, invertedIndexes: {}, documentIds: [], idToShortId: {}, shortIdToId: {} };
+    const oldData = {
+      documentCount: 0,
+      fieldLength: {},
+      averageFieldLength: {},
+      documents: {},
+      fieldVectors: {},
+      invertedIndexes: {},
+      documentIds: [],
+      idToShortId: {},
+      shortIdToId: {},
+    };
     await writeFile(join(base, ".memory-index.json"), JSON.stringify(oldData));
-    
+
     const index = new TextIndex(base);
     await index.load();
     expect(index.search("test", 1)).toEqual([]);
@@ -1784,7 +1835,7 @@ describe("TextIndex (MiniSearch)", () => {
     // Create a mock index file in new wrapped format
     const newData = { index: oldData, fileMap: {} };
     await writeFile(join(base, ".memory-index.json"), JSON.stringify(newData));
-    
+
     const index2 = new TextIndex(base);
     await index2.load();
     expect(index2.search("test", 1)).toEqual([]);
@@ -1794,15 +1845,15 @@ describe("TextIndex (MiniSearch)", () => {
     const base = join(tmpdir(), `memory-rem-${Date.now()}`);
     await mkdir(base, { recursive: true });
     const index = new TextIndex(base);
-    
+
     index.add([
       { id: "1", file: "a.md", startLine: 1, endLine: 1, text: "apple", hash: "1" },
       { id: "2", file: "b.md", startLine: 1, endLine: 1, text: "banana", hash: "2" },
       { id: "3", file: "a.md", startLine: 2, endLine: 2, text: "cherry", hash: "3" },
     ]);
-    
+
     index.removeByFile("a.md");
-    
+
     expect(index.search("apple", 10)).toHaveLength(0);
     expect(index.search("cherry", 10)).toHaveLength(0);
     expect(index.search("banana", 10)).toHaveLength(1);
@@ -1812,7 +1863,7 @@ describe("TextIndex (MiniSearch)", () => {
     const base = join(tmpdir(), `memory-qdrant-err-test-${Date.now()}`);
     await mkdir(base, { recursive: true });
     await writeFile(join(base, ".memory-index.json"), "invalid json");
-    
+
     const index = new TextIndex(base);
     await index.load(); // Should not throw
     index.add([{ id: "1", file: "a.md", text: "test", startLine: 1, endLine: 1, hash: "h" }]);
@@ -1831,13 +1882,13 @@ describe("KnowledgeGraph", () => {
     const base = join(tmpdir(), `memory-qdrant-test-${Date.now()}`);
     await mkdir(base, { recursive: true });
     const kg = new KnowledgeGraph(base);
-    
+
     kg.updateFile("a.md", "Link to [[b.md]]");
     kg.updateFile("b.md", "Back to [[a.md]]");
-    
+
     const a = kg.getRelated("a.md");
     const b = kg.getRelated("b.md");
-    
+
     expect(a.links).toContain("b.md");
     expect(a.backlinks).toContain("b.md");
     expect(b.links).toContain("a.md");
@@ -1848,7 +1899,7 @@ describe("KnowledgeGraph", () => {
     const kg = new KnowledgeGraph("/tmp");
     kg.updateFile("orphan.md", "I link to [[hub.md]]");
     kg.updateFile("hub.md", "I am popular");
-    
+
     const orphans = kg.getOrphans();
     expect(orphans).toContain("orphan.md");
     expect(orphans).not.toContain("hub.md");
@@ -1858,7 +1909,7 @@ describe("KnowledgeGraph", () => {
     const base = join(tmpdir(), `memory-kg-err-test-${Date.now()}`);
     await mkdir(base, { recursive: true });
     await writeFile(join(base, ".memory-graph.json"), "invalid json");
-    
+
     const kg = new KnowledgeGraph(base);
     await kg.load(); // Should not throw
     kg.updateFile("a.md", "[[b.md]]");
@@ -2071,14 +2122,16 @@ describe("tools", () => {
 
     memoryQdrantPlugin.register(api as never);
     const memorySearch = tools.memory_search;
-    
+
     // Mock KnowledgeGraph for "related" check
-    const spyKG = vi.spyOn(KnowledgeGraph.prototype, "getRelated").mockReturnValue({ links: ["b.md"], backlinks: [] });
+    const spyKG = vi
+      .spyOn(KnowledgeGraph.prototype, "getRelated")
+      .mockReturnValue({ links: ["b.md"], backlinks: [] });
 
     const res = await memorySearch.execute("", { query: "test" });
     expect(res.details.results[0].file).toBe("memory/test.md");
     expect(res.details.results[0].related).toEqual(["b.md"]);
-    
+
     spyKG.mockRestore();
   });
 
@@ -2089,7 +2142,9 @@ describe("tools", () => {
       pluginConfig: { vaultPath: "/tmp" },
       resolvePath: (p: string) => p,
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-      registerTool: (t: any) => { tools[t.name] = t; },
+      registerTool: (t: any) => {
+        tools[t.name] = t;
+      },
       registerService: () => {},
       on: () => {},
     } as unknown;
@@ -2097,18 +2152,49 @@ describe("tools", () => {
     memoryQdrantPlugin.register(api as never);
 
     // Mock vector results
-    mockFetch.mockResolvedValueOnce({
-      ok: true, json: async () => ({ embedding: [0.1] })
-    } as any).mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        result: [{ id: "vec1", score: 0.9, payload: { file: "v.md", text: "vector", startLine: 1, endLine: 1 } }]
-      })
-    } as any);
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ embedding: [0.1] }),
+      } as any)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          result: [
+            {
+              id: "vec1",
+              score: 0.9,
+              payload: { file: "v.md", text: "vector", startLine: 1, endLine: 1 },
+            },
+          ],
+        }),
+      } as any);
 
     const spyText = vi.spyOn(TextIndex.prototype, "search").mockReturnValue([
-      { id: "vec1", score: 10, match: {} as any, terms: [], queryTerms: [], file: "v.md", text: "vector", startLine: 1, endLine: 1, source: "workspace" } as any, // Overlap
-      { id: "text1", score: 5, match: {} as any, terms: [], queryTerms: [], file: "t.md", text: "text", startLine: 1, endLine: 1, source: "workspace" } as any // Text only
+      {
+        id: "vec1",
+        score: 10,
+        match: {} as any,
+        terms: [],
+        queryTerms: [],
+        file: "v.md",
+        text: "vector",
+        startLine: 1,
+        endLine: 1,
+        source: "workspace",
+      } as any, // Overlap
+      {
+        id: "text1",
+        score: 5,
+        match: {} as any,
+        terms: [],
+        queryTerms: [],
+        file: "t.md",
+        text: "text",
+        startLine: 1,
+        endLine: 1,
+        source: "workspace",
+      } as any, // Text only
     ]);
 
     const res = await tools.memory_search.execute("", { query: "mix" });
@@ -2116,7 +2202,7 @@ describe("tools", () => {
     expect(res.details.results).toHaveLength(2);
     // vec1 should be first due to high vector score + text score
     expect(res.details.results[0].file).toBe("v.md");
-    
+
     spyText.mockRestore();
   });
 
@@ -2151,30 +2237,38 @@ describe("tools", () => {
       pluginConfig: { vaultPath: "/tmp" },
       resolvePath: (p: string) => p,
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-      registerTool: (t: any) => { tools[t.name] = t; },
+      registerTool: (t: any) => {
+        tools[t.name] = t;
+      },
       registerService: () => {},
       on: () => {},
     } as unknown;
 
     memoryQdrantPlugin.register(api as never);
-    
+
     // Mock qdrant client methods to throw
-    const spyList = vi.spyOn(QdrantClient.prototype, "listCaptured").mockRejectedValue(new Error("List failed"));
-    const spyDel = vi.spyOn(QdrantClient.prototype, "deleteCaptured").mockRejectedValue(new Error("Delete failed"));
-    
+    const spyList = vi
+      .spyOn(QdrantClient.prototype, "listCaptured")
+      .mockRejectedValue(new Error("List failed"));
+    const spyDel = vi
+      .spyOn(QdrantClient.prototype, "deleteCaptured")
+      .mockRejectedValue(new Error("Delete failed"));
+
     // Test list error
     const resList = await tools.memory_captured_list.execute("", {});
     expect(resList.details.error).toContain("List failed");
-    
+
     // Test delete error
     const resDel = await tools.memory_captured_delete.execute("", { id: "1" });
     expect(resDel.details.error).toContain("Delete failed");
-    
+
     spyList.mockRestore();
     spyDel.mockRestore();
 
     // Test export error
-    const spyExport = vi.spyOn(QdrantClient.prototype, "listCaptured").mockRejectedValue(new Error("Export failed"));
+    const spyExport = vi
+      .spyOn(QdrantClient.prototype, "listCaptured")
+      .mockRejectedValue(new Error("Export failed"));
     const resExport = await tools.memory_captured_export.execute("", {});
     expect(resExport.details.error).toContain("Export failed");
     spyExport.mockRestore();
@@ -2291,17 +2385,17 @@ describe("tools", () => {
     const kg = new KnowledgeGraph(base);
     kg.updateFile("a", "[[b]] [[c|Alias]]");
     kg.updateFile("b", "[[a]]");
-    
+
     // Test removeFile with backlinks (ghost node)
     kg.removeFile("b");
     expect(kg.getRelated("a").links).toContain("b");
-    
+
     // Test removeFile without backlinks
     kg.removeFile("c");
-    
+
     // Test getRelated extensions
     expect(kg.getRelated("a.md").links).toHaveLength(2);
-    
+
     // Test getRelated basename
     kg.updateFile("dir/file", "link");
     expect(kg.getRelated("file.md").links).toHaveLength(0);
@@ -2309,12 +2403,12 @@ describe("tools", () => {
     const ti = new TextIndex(base);
     ti.add([{ id: "1", file: "a.md", startLine: 1, endLine: 1, text: "foo", hash: "h" }]);
     ti.add([{ id: "2", file: "b.md", startLine: 1, endLine: 1, text: "bar", hash: "h" }]);
-    
+
     // Test removeByFile (rebuild path)
     ti.removeByFile("a.md");
     // MiniSearch might store things differently in toJSON; ensure we cover the case where we can't find the file
     ti.removeByFile("non-existent.md");
-    
+
     // Note: MiniSearch toJSON structure might not preserve all fields for internal use in tests
     // so we verify that no crash occurred and it's still functional.
     expect(ti.search("bar", 1)).toBeDefined();
@@ -2327,7 +2421,9 @@ describe("tools", () => {
       pluginConfig: { vaultPath: "/tmp", autoIndex: false },
       resolvePath: (p: string) => p,
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-      registerTool: (t: any) => { tools[t.name] = t; },
+      registerTool: (t: any) => {
+        tools[t.name] = t;
+      },
       registerService: () => {},
       on: () => {},
     } as unknown;
@@ -2373,16 +2469,16 @@ describe("tools", () => {
     await mkdir(base, { recursive: true });
     await mkdir(join(base, "memory"), { recursive: true });
     await writeFile(join(base, "MEMORY.md"), "main");
-    
+
     const extraFile = join(base, "extra.md");
     await writeFile(extraFile, "extra");
 
     const api = {
       workspaceDir: base,
-      pluginConfig: { 
-        vaultPath: base, 
+      pluginConfig: {
+        vaultPath: base,
         autoIndex: true,
-        extraPaths: [extraFile]
+        extraPaths: [extraFile],
       },
       resolvePath: (p: string) => p,
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -2392,8 +2488,10 @@ describe("tools", () => {
     } as unknown;
 
     mockFetch.mockImplementation(async (url: string) => {
-      if (url.includes("/api/embeddings")) return { ok: true, json: async () => ({ embedding: [0.1] }) } as any;
-      if (url.includes("/collections")) return { ok: true, json: async () => ({ result: { collections: [] } }) } as any;
+      if (url.includes("/api/embeddings"))
+        return { ok: true, json: async () => ({ embedding: [0.1] }) } as any;
+      if (url.includes("/collections"))
+        return { ok: true, json: async () => ({ result: { collections: [] } }) } as any;
       return { ok: true, json: async () => ({}) } as any;
     });
 
@@ -2402,9 +2500,9 @@ describe("tools", () => {
 
     memoryQdrantPlugin.register(api as never);
     await services[0].start();
-    
+
     // Wait for indexing
-    await new Promise(r => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 200));
     await services[0].stop();
     expect(true).toBe(true);
   });
@@ -2430,13 +2528,24 @@ describe("tools", () => {
     await writeFile(join(base, "fail.md"), "content");
 
     await indexDirectory(base, "vault/", qdrant, embeddings, api.logger as any);
-    expect(logs.some(l => l.includes("failed to index"))).toBe(true);
+    expect(logs.some((l) => l.includes("failed to index"))).toBe(true);
   });
 
   it("search: handles short queries correctly", () => {
-    const textIndex = new TextIndex();
-    textIndex.add({ id: "1", text: "This is a test", file: "test.md", startLine: 1, endLine: 1, source: "workspace" });
-    textIndex.add({ id: "2", text: "Short", file: "short.md", startLine: 1, endLine: 1, source: "workspace" });
+    const textIndex = new TextIndex("/tmp");
+    textIndex.add([
+      {
+        id: "1",
+        text: "This is a test",
+        file: "test.md",
+        startLine: 1,
+        endLine: 1,
+        source: "workspace",
+      },
+    ]);
+    textIndex.add([
+      { id: "2", text: "Short", file: "short.md", startLine: 1, endLine: 1, source: "workspace" },
+    ]);
 
     // Short query should still find matches
     const results = textIndex.search("is", 10);
@@ -2449,8 +2558,17 @@ describe("tools", () => {
   });
 
   it("search: fallback to text-only when embedding fails", () => {
-    const textIndex = new TextIndex();
-    textIndex.add({ id: "1", text: "Important fact about deployment", file: "memory.md", startLine: 1, endLine: 1, source: "workspace" });
+    const textIndex = new TextIndex("/tmp");
+    textIndex.add([
+      {
+        id: "1",
+        text: "Important fact about deployment",
+        file: "memory.md",
+        startLine: 1,
+        endLine: 1,
+        source: "workspace",
+      },
+    ]);
 
     // Text search should work independently
     const textResults = textIndex.search("deployment", 10);
@@ -2459,8 +2577,8 @@ describe("tools", () => {
   });
 
   it("knowledgeGraph: correctly ignores wikilinks in code blocks", () => {
-    const graph = new KnowledgeGraph();
-    
+    const graph = new KnowledgeGraph("/tmp");
+
     // Text with code block containing [[fake link]]
     const contentWithCode = `
 # Document
@@ -2476,28 +2594,27 @@ Some paragraph.
 
     graph.updateFile("test.md", contentWithCode);
     const node = (graph as any).nodes.get("test.md");
-    
+
     // Should only have RealLink, not the fake one in code block
     expect(node.links).toContain("RealLink");
     expect(node.links.some((l: string) => l.includes("This is not"))).toBe(false);
   });
 
   it("knowledgeGraph: handles escaped bracket syntax", () => {
-    const graph = new KnowledgeGraph();
-    
+    const graph = new KnowledgeGraph("/tmp");
+
     // Text with escaped bracket syntax that might appear in code examples
     const contentWithEscape = `
 [[ValidLink]]
-\[[Not a real link]]
+\\[[Not a real link]]
 \`[[Another fake link]]\`
     `;
 
     graph.updateFile("test.md", contentWithEscape);
     const node = (graph as any).nodes.get("test.md");
-    
+
     // Should only have ValidLink
     expect(node.links.length).toBe(1);
     expect(node.links[0]).toBe("ValidLink");
   });
 });
-
