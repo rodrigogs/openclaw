@@ -138,6 +138,11 @@ export function parseConfig(raw: unknown, workspaceDir: string): Required<Plugin
     autoCaptureDupThreshold: cfg.autoCaptureDupThreshold ?? DEFAULT_CONFIG.autoCaptureDupThreshold,
     autoCaptureWindowMs: cfg.autoCaptureWindowMs ?? DEFAULT_CONFIG.autoCaptureWindowMs,
     autoCaptureMaxPerWindow: cfg.autoCaptureMaxPerWindow ?? DEFAULT_CONFIG.autoCaptureMaxPerWindow,
+    // Watcher
+    watcherDebounceMs: cfg.watcherDebounceMs ?? DEFAULT_CONFIG.watcherDebounceMs,
+    // Orphans
+    autoOrganizeOrphans: cfg.autoOrganizeOrphans ?? DEFAULT_CONFIG.autoOrganizeOrphans,
+    orphanThresholdMs: cfg.orphanThresholdMs ?? DEFAULT_CONFIG.orphanThresholdMs,
   };
 }
 
@@ -282,16 +287,21 @@ export class KnowledgeGraph {
     // This prevents false positives from [[  ]] in code examples
     const codeBlockRemoved = text
       .replace(/```[\s\S]*?```/g, "") // Remove code blocks
-      .replace(/`[^`]+`/g, "");       // Remove inline code
+      .replace(/`[^`]+`/g, ""); // Remove inline code
 
     const regex = /\[\[(.*?)\]\]/g;
     const links: string[] = [];
     let match;
     while ((match = regex.exec(codeBlockRemoved)) !== null) {
+      // Check for escape character before the match
+      if (match.index > 0 && codeBlockRemoved[match.index - 1] === "\\") {
+        continue;
+      }
+
       // Handle aliases [[Link|Alias]]
       const link = match[1].split("|")[0].trim();
-      // Skip empty links or links that look like escaped attempts
-      if (link && !link.startsWith("\\")) links.push(link);
+      // Skip empty links
+      if (link) links.push(link);
     }
     return links;
   }
@@ -998,7 +1008,7 @@ const memoryQdrantPlugin = {
   },
 
   register(api: OpenClawPluginApi) {
-    const workspaceDir = api.workspaceDir || process.cwd();
+    const workspaceDir = (api as any).workspaceDir || process.cwd();
     const cfg = parseConfig(api.pluginConfig, workspaceDir);
 
     const resolvedVaultPath = api.resolvePath(cfg.vaultPath);
@@ -1027,7 +1037,7 @@ const memoryQdrantPlugin = {
       let timeout: NodeJS.Timeout | null = null;
       return () => {
         if (timeout) clearTimeout(timeout);
-        timeout = setTimeout(() => runIndexing(), finalConfig.watcherDebounceMs);
+        timeout = setTimeout(() => runIndexing(), cfg.watcherDebounceMs);
       };
     })();
 
@@ -1184,7 +1194,9 @@ const memoryQdrantPlugin = {
               vectorResults = await qdrant.search(vector, maxResults, minScore);
             } catch (err) {
               embeddingError = err instanceof Error ? err.message : String(err);
-              api.logger.warn(`memory-qdrant: vector search failed, falling back to text-only: ${embeddingError}`);
+              api.logger.warn(
+                `memory-qdrant: vector search failed, falling back to text-only: ${embeddingError}`,
+              );
             }
 
             // Always do text search for robustness
@@ -1260,6 +1272,7 @@ const memoryQdrantPlugin = {
               hybrid: !embeddingError,
               embeddingFailed: embeddingError ? true : undefined,
               fallbackMode: embeddingError ? "text-only" : undefined,
+              error: embeddingError || undefined,
             });
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
@@ -1529,7 +1542,7 @@ const memoryQdrantPlugin = {
           if (!shouldCapture(text)) return;
 
           // Rate limit per conversation/session
-          const key = ctx?.conversationId || ctx?.sessionKey || event?.from || "default";
+          const key = ctx?.conversationId || (ctx as any)?.sessionKey || event?.from || "default";
           const now = Date.now();
           const windowMs = cfg.autoCaptureWindowMs;
           const maxPerWindow = cfg.autoCaptureMaxPerWindow;
@@ -1564,7 +1577,7 @@ const memoryQdrantPlugin = {
             text,
             category,
             capturedAt: Date.now(),
-            sessionKey: ctx?.sessionKey,
+            sessionKey: (ctx as any)?.sessionKey,
           };
 
           await qdrant.upsertCaptured(memory, vector);
