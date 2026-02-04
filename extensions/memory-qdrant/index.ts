@@ -65,6 +65,8 @@ type PluginConfig = {
   embeddingModel?: string;
   autoIndex?: boolean;
   extraPaths?: string[];
+  // Watcher settings
+  watcherDebounceMs?: number;
   // Auto-recall settings
   autoRecall?: boolean;
   autoRecallLimit?: number;
@@ -75,6 +77,9 @@ type PluginConfig = {
   autoCaptureDupThreshold?: number;
   autoCaptureWindowMs?: number;
   autoCaptureMaxPerWindow?: number;
+  // Auto-organization settings
+  autoOrganizeOrphans?: boolean;
+  orphanThresholdMs?: number;
 };
 
 // ============================================================================
@@ -87,6 +92,8 @@ const DEFAULT_CONFIG = {
   ollamaUrl: "http://localhost:11434",
   embeddingModel: "nomic-embed-text",
   autoIndex: true,
+  // Watcher settings
+  watcherDebounceMs: 1500, // Time to wait before re-indexing after file changes
   // Auto-recall defaults
   autoRecall: true,
   autoRecallLimit: 3,
@@ -97,6 +104,9 @@ const DEFAULT_CONFIG = {
   autoCaptureDupThreshold: 0.92,
   autoCaptureWindowMs: 5 * 60 * 1000,
   autoCaptureMaxPerWindow: 3,
+  // Auto-organization defaults
+  autoOrganizeOrphans: true, // Detect and organize orphaned notes
+  orphanThresholdMs: 24 * 60 * 60 * 1000, // 24h: note is orphan if no links for 24h
 };
 
 export function parseConfig(raw: unknown, workspaceDir: string): Required<PluginConfig> {
@@ -268,13 +278,20 @@ export class KnowledgeGraph {
   }
 
   extractLinks(text: string): string[] {
+    // Remove code blocks and inline code before extracting links
+    // This prevents false positives from [[  ]] in code examples
+    const codeBlockRemoved = text
+      .replace(/```[\s\S]*?```/g, "") // Remove code blocks
+      .replace(/`[^`]+`/g, "");       // Remove inline code
+
     const regex = /\[\[(.*?)\]\]/g;
     const links: string[] = [];
     let match;
-    while ((match = regex.exec(text)) !== null) {
+    while ((match = regex.exec(codeBlockRemoved)) !== null) {
       // Handle aliases [[Link|Alias]]
       const link = match[1].split("|")[0].trim();
-      if (link) links.push(link);
+      // Skip empty links or links that look like escaped attempts
+      if (link && !link.startsWith("\\")) links.push(link);
     }
     return links;
   }
@@ -1010,7 +1027,7 @@ const memoryQdrantPlugin = {
       let timeout: NodeJS.Timeout | null = null;
       return () => {
         if (timeout) clearTimeout(timeout);
-        timeout = setTimeout(() => runIndexing(), 1500);
+        timeout = setTimeout(() => runIndexing(), finalConfig.watcherDebounceMs);
       };
     })();
 
