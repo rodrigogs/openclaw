@@ -2532,9 +2532,20 @@ describe("tools", () => {
   });
 
   it("search: handles short queries correctly", () => {
-    const textIndex = new TextIndex();
-    textIndex.add({ id: "1", text: "This is a test", file: "test.md", startLine: 1, endLine: 1, source: "workspace" });
-    textIndex.add({ id: "2", text: "Short", file: "short.md", startLine: 1, endLine: 1, source: "workspace" });
+    const textIndex = new TextIndex("/tmp");
+    textIndex.add([
+      {
+        id: "1",
+        text: "This is a test",
+        file: "test.md",
+        startLine: 1,
+        endLine: 1,
+        source: "workspace",
+      },
+    ]);
+    textIndex.add([
+      { id: "2", text: "Short", file: "short.md", startLine: 1, endLine: 1, source: "workspace" },
+    ]);
 
     // Short query should still find matches
     const results = textIndex.search("is", 10);
@@ -2547,8 +2558,17 @@ describe("tools", () => {
   });
 
   it("search: fallback to text-only when embedding fails", () => {
-    const textIndex = new TextIndex();
-    textIndex.add({ id: "1", text: "Important fact about deployment", file: "memory.md", startLine: 1, endLine: 1, source: "workspace" });
+    const textIndex = new TextIndex("/tmp");
+    textIndex.add([
+      {
+        id: "1",
+        text: "Important fact about deployment",
+        file: "memory.md",
+        startLine: 1,
+        endLine: 1,
+        source: "workspace",
+      },
+    ]);
 
     // Text search should work independently
     const textResults = textIndex.search("deployment", 10);
@@ -2557,8 +2577,8 @@ describe("tools", () => {
   });
 
   it("knowledgeGraph: correctly ignores wikilinks in code blocks", () => {
-    const graph = new KnowledgeGraph();
-    
+    const graph = new KnowledgeGraph("/tmp");
+
     // Text with code block containing [[fake link]]
     const contentWithCode = `
 # Document
@@ -2574,28 +2594,27 @@ Some paragraph.
 
     graph.updateFile("test.md", contentWithCode);
     const node = (graph as any).nodes.get("test.md");
-    
+
     // Should only have RealLink, not the fake one in code block
     expect(node.links).toContain("RealLink");
     expect(node.links.some((l: string) => l.includes("This is not"))).toBe(false);
   });
 
   it("knowledgeGraph: handles escaped bracket syntax", () => {
-    const graph = new KnowledgeGraph();
-    
+    const graph = new KnowledgeGraph("/tmp");
+
     // Text with escaped bracket syntax that might appear in code examples
     const contentWithEscape = `
 [[ValidLink]]
-\[[Not a real link]]
+\\[[Not a real link]]
 \`[[Another fake link]]\`
     `;
 
     graph.updateFile("test.md", contentWithEscape);
     const node = (graph as any).nodes.get("test.md");
-    
+
     // Should only have ValidLink
     expect(node.links.length).toBe(1);
     expect(node.links[0]).toBe("ValidLink");
   });
 });
-
