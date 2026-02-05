@@ -1506,25 +1506,58 @@ const memoryQdrantPlugin = {
         if (event.prompt.includes("<relevant-memories>")) return;
 
         try {
-          const vector = await embeddings.embed(event.prompt);
-          const results = await qdrant.search(vector, cfg.autoRecallLimit, cfg.autoRecallMinScore);
+          // Timeout protection: max 3 seconds for auto-recall (don't block agent)
+          const timeoutMs = 3000;
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-          if (results.length === 0) return;
+          try {
+            const vector = await Promise.race([
+              embeddings.embed(event.prompt),
+              new Promise<never>((_, reject) =>
+                controller.signal.addEventListener("abort", () =>
+                  reject(new Error("embedding timeout")),
+                ),
+              ),
+            ]);
 
-          const memoryContext = results
-            .map(
-              (r) =>
-                `- [${r.source}/${r.file}] ${r.snippet.slice(0, 200)}${r.snippet.length > 200 ? "..." : ""}`,
-            )
-            .join("\n");
+            const results = await Promise.race([
+              qdrant.search(vector, cfg.autoRecallLimit, cfg.autoRecallMinScore),
+              new Promise<never>((_, reject) =>
+                controller.signal.addEventListener("abort", () =>
+                  reject(new Error("search timeout")),
+                ),
+              ),
+            ]);
 
-          api.logger.info(`memory-qdrant: auto-recall injecting ${results.length} memories`);
+            clearTimeout(timeoutId);
 
-          return {
-            prependContext: `<relevant-memories>\nThe following memories may be relevant:\n${memoryContext}\n</relevant-memories>\n\n`,
-          };
+            if (results.length === 0) return;
+
+            const memoryContext = results
+              .map(
+                (r) =>
+                  `- [${r.source}/${r.file}] ${r.snippet.slice(0, 200)}${r.snippet.length > 200 ? "..." : ""}`,
+              )
+              .join("\n");
+
+            api.logger.info(`memory-qdrant: auto-recall injecting ${results.length} memories`);
+
+            return {
+              prependContext: `<relevant-memories>\nThe following memories may be relevant:\n${memoryContext}\n</relevant-memories>\n\n`,
+            };
+          } catch (err) {
+            clearTimeout(timeoutId);
+            throw err;
+          }
         } catch (err) {
-          api.logger.warn(`memory-qdrant: auto-recall failed: ${String(err)}`);
+          const errMsg = err instanceof Error ? err.message : String(err);
+          if (errMsg.includes("timeout")) {
+            api.logger.warn(`memory-qdrant: auto-recall timeout (proceeding without memories)`);
+          } else {
+            api.logger.warn(`memory-qdrant: auto-recall failed: ${errMsg}`);
+          }
+          // Don't return anything; proceed without memories
         }
       });
     }
