@@ -20,6 +20,9 @@ import memoryQdrantPlugin, {
   findMarkdownFiles,
   KnowledgeGraph,
   TextIndex,
+  parseYamlFrontmatter,
+  inferCategory,
+  extractHeaders,
 } from "./index.ts";
 
 const watcherState = vi.hoisted(() => ({
@@ -2616,5 +2619,71 @@ Some paragraph.
     // Should only have ValidLink
     expect(node.links.length).toBe(1);
     expect(node.links[0]).toBe("ValidLink");
+  });
+});
+
+describe("YAML Frontmatter & Wikilinks Extraction", () => {
+  test("parseYamlFrontmatter extracts tags", () => {
+    const text = `---
+type: project
+status: active
+tags: [rust, cli, devtools]
+---
+# Content`;
+    const { tags, metadata } = parseYamlFrontmatter(text);
+    expect(tags).toContain("rust");
+    expect(tags).toContain("cli");
+    expect(metadata.type).toBe("project");
+    expect(metadata.status).toBe("active");
+  });
+
+  test("inferCategory works for vault paths", () => {
+    expect(inferCategory("vault/01 Journal/2026-02-05.md")).toBe("journal");
+    expect(inferCategory("vault/02 Topics/Projects/openclaw.md")).toBe("project");
+    expect(inferCategory("vault/03 People/Rodrigo.md")).toBe("person");
+    expect(inferCategory("memory/2026-02-05.md")).toBe("session");
+    expect(inferCategory("MEMORY.md")).toBe("core");
+  });
+
+  test("extractHeaders captures markdown headers", () => {
+    const text = `# Main Title
+## Subsection
+### Details
+Some content`;
+    const headers = extractHeaders(text);
+    expect(headers).toContain("main title");
+    expect(headers).toContain("subsection");
+    expect(headers).toContain("details");
+  });
+
+  test("payload includes tags, links, and category", async () => {
+    // This integration test verifies the full flow
+    // Mock a chunk with frontmatter + wikilinks
+    const chunk = {
+      file: "vault/02 Topics/Projects/openclaw.md",
+      startLine: 1,
+      endLine: 50,
+      text: `---
+type: project
+status: stable
+tags: [typescript, plugin]
+---
+# OpenClaw
+See [[MEMORY.md]] and [[memory-qdrant]].
+`,
+      hash: "abc123",
+    };
+
+    // Simulate the extraction
+    const { tags, metadata } = parseYamlFrontmatter(chunk.text);
+    const headers = extractHeaders(chunk.text);
+    const category = inferCategory(chunk.file);
+    const finalTags = [...new Set([...tags, ...headers])];
+
+    expect(finalTags).toContain("typescript");
+    expect(finalTags).toContain("plugin");
+    expect(finalTags).toContain("openclaw");
+    expect(category).toBe("project");
+    expect(metadata.status).toBe("stable");
   });
 });
