@@ -88,7 +88,7 @@ type PluginConfig = {
 
 const DEFAULT_CONFIG = {
   qdrantUrl: "http://localhost:6333",
-  collection: "openclaw-memory",
+  collection: "sabia-memory",
   ollamaUrl: "http://localhost:11434",
   embeddingModel: "nomic-embed-text",
   autoIndex: true,
@@ -890,12 +890,13 @@ export async function indexFile(
 
   // Set file and compute IDs
   const processedChunks = chunks.map((chunk) => {
-    const id = createHash("sha256")
+    const hash = createHash("sha256")
       .update(`${relPath}:${chunk.startLine}-${chunk.endLine}`)
-      .digest("hex")
-      .slice(0, 32);
-    const hash = createHash("sha256").update(chunk.text).digest("hex");
-    return { ...chunk, id, file: relPath, hash };
+      .digest();
+    // Convert first 8 bytes to unsigned 64-bit integer
+    const id = Number(BigInt(hash.readBigUInt64BE(0)) & BigInt("0x7FFFFFFFFFFFFFFF")).toString();
+    const contentHash = createHash("sha256").update(chunk.text).digest("hex");
+    return { ...chunk, id, file: relPath, hash: contentHash };
   });
 
   // Delete old chunks for this file (Vector DB)
@@ -1605,8 +1606,12 @@ const memoryQdrantPlugin = {
           }
 
           const category = detectCategory(text);
+          const hashBuf = createHash("sha256").update(`${Date.now()}-${text}`).digest();
+          const id = Number(
+            BigInt(hashBuf.readBigUInt64BE(0)) & BigInt("0x7FFFFFFFFFFFFFFF"),
+          ).toString();
           const memory: CapturedMemory = {
-            id: createHash("sha256").update(`${Date.now()}-${text}`).digest("hex").slice(0, 32),
+            id,
             text,
             category,
             capturedAt: Date.now(),
