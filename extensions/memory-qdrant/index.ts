@@ -663,7 +663,7 @@ export class QdrantClient {
       const links = kg ? kg.getLinks(chunk.file) || [] : [];
 
       return {
-        id: chunk.id,
+        id: Number(chunk.id),
         vector: embeddings[i],
         payload: {
           file: chunk.file,
