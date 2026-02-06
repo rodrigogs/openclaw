@@ -16,9 +16,22 @@ import { Type } from "@sinclair/typebox";
 import { watch } from "chokidar";
 import MiniSearch from "minisearch";
 import { createHash } from "node:crypto";
-import { readFile, readdir, stat, appendFile, mkdir, writeFile } from "node:fs/promises";
+import { readFile, readdir, stat, mkdir, writeFile } from "node:fs/promises";
 import { join, relative, dirname } from "node:path";
 import { jsonResult, readStringParam, readNumberParam } from "openclaw/plugin-sdk";
+
+/**
+ * Generate a numeric point ID safe for Qdrant from a hash input string.
+ * Uses 53-bit masking (Number.MAX_SAFE_INTEGER) to avoid precision loss
+ * when converting BigInt to Number.
+ */
+export function generatePointId(input: string): string {
+  const hash = createHash("sha256").update(input).digest();
+  const raw = hash.readBigUInt64BE(0);
+  // Mask to 53 bits — Number.MAX_SAFE_INTEGER is 2^53 - 1
+  const safe = Number(raw & BigInt("0x1FFFFFFFFFFFFF"));
+  return safe.toString();
+}
 
 // ============================================================================
 // Types
@@ -42,6 +55,7 @@ type MemorySearchResult = {
   score: number;
   source: "vault" | "workspace" | "captured";
   related?: string[];
+  capturedAt?: number; // For recency scoring
 };
 
 const CAPTURED_CATEGORIES = ["preference", "project", "personal", "other"] as const;
@@ -71,6 +85,10 @@ type PluginConfig = {
   autoRecall?: boolean;
   autoRecallLimit?: number;
   autoRecallMinScore?: number;
+  // Recency scoring (for captured memories)
+  recencyEnabled?: boolean;
+  recencyHalfLifeDays?: number;
+  recencyWeight?: number;
   // Auto-capture settings
   autoCapture?: boolean;
   autoCaptureMax?: number;
@@ -98,6 +116,10 @@ const DEFAULT_CONFIG = {
   autoRecall: true,
   autoRecallLimit: 3,
   autoRecallMinScore: 0.4,
+  // Recency scoring defaults (half-life = 30 days)
+  recencyEnabled: true,
+  recencyHalfLifeDays: 30,
+  recencyWeight: 0.2, // 20% weight on recency
   // Auto-capture defaults (disabled by default for safety)
   autoCapture: false,
   autoCaptureMax: 3,
@@ -132,6 +154,10 @@ export function parseConfig(raw: unknown, workspaceDir: string): Required<Plugin
     autoRecall: cfg.autoRecall ?? DEFAULT_CONFIG.autoRecall,
     autoRecallLimit: cfg.autoRecallLimit ?? DEFAULT_CONFIG.autoRecallLimit,
     autoRecallMinScore: cfg.autoRecallMinScore ?? DEFAULT_CONFIG.autoRecallMinScore,
+    // Recency scoring
+    recencyEnabled: cfg.recencyEnabled ?? DEFAULT_CONFIG.recencyEnabled,
+    recencyHalfLifeDays: cfg.recencyHalfLifeDays ?? DEFAULT_CONFIG.recencyHalfLifeDays,
+    recencyWeight: cfg.recencyWeight ?? DEFAULT_CONFIG.recencyWeight,
     // Auto-capture
     autoCapture: cfg.autoCapture ?? DEFAULT_CONFIG.autoCapture,
     autoCaptureMax: cfg.autoCaptureMax ?? DEFAULT_CONFIG.autoCaptureMax,
@@ -203,19 +229,27 @@ const MEMORY_EXCLUSIONS = [
 export function shouldCapture(text: string): boolean {
   // Check exclusions first (faster)
   for (const pattern of MEMORY_EXCLUSIONS) {
-    if (pattern.test(text)) return false;
+    if (pattern.test(text)) {
+      return false;
+    }
   }
 
   // Skip if already contains memory injection
-  if (text.includes("<relevant-memories>")) return false;
+  if (text.includes("<relevant-memories>")) {
+    return false;
+  }
 
   // Skip emoji-heavy content (likely agent output)
   const emojiCount = (text.match(/[\u{1F300}-\u{1F9FF}]/gu) || []).length;
-  if (emojiCount > 3) return false;
+  if (emojiCount > 3) {
+    return false;
+  }
 
   // Check if any trigger matches
   for (const pattern of MEMORY_TRIGGERS) {
-    if (pattern.test(text)) return true;
+    if (pattern.test(text)) {
+      return true;
+    }
   }
 
   return false;
@@ -252,20 +286,24 @@ export function detectCategory(text: string): CapturedCategory {
 
 export function parseYamlFrontmatter(text: string): {
   tags: string[];
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
 } {
   const frontmatterMatch = text.match(/^---\n([\s\S]*?)\n---/);
-  if (!frontmatterMatch) return { tags: [], metadata: {} };
+  if (!frontmatterMatch) {
+    return { tags: [], metadata: {} };
+  }
 
   const frontmatterText = frontmatterMatch[1];
-  const metadata: Record<string, any> = {};
+  const metadata: Record<string, unknown> = {};
   const tags: string[] = [];
 
   // Extract YAML fields: type: project, status: active, tags: [a, b, c], etc.
   const lines = frontmatterText.split("\n");
   for (const line of lines) {
     const [key, ...valueParts] = line.split(":");
-    if (!key || !valueParts.length) continue;
+    if (!key || !valueParts.length) {
+      continue;
+    }
     const value = valueParts.join(":").trim();
 
     // Parse tags
@@ -295,14 +333,26 @@ export function parseYamlFrontmatter(text: string): {
 
 export function inferCategory(filePath: string): string {
   if (filePath.startsWith("vault/")) {
-    if (filePath.includes("Journal")) return "journal";
-    if (filePath.includes("Projects")) return "project";
-    if (filePath.includes("Topics")) return "knowledge";
-    if (filePath.includes("People")) return "person";
+    if (filePath.includes("Journal")) {
+      return "journal";
+    }
+    if (filePath.includes("Projects")) {
+      return "project";
+    }
+    if (filePath.includes("Topics")) {
+      return "knowledge";
+    }
+    if (filePath.includes("People")) {
+      return "person";
+    }
     return "knowledge";
   }
-  if (filePath.startsWith("memory/")) return "session";
-  if (filePath === "MEMORY.md" || filePath === "SOUL.md" || filePath === "USER.md") return "core";
+  if (filePath.startsWith("memory/")) {
+    return "session";
+  }
+  if (filePath === "MEMORY.md" || filePath === "SOUL.md" || filePath === "USER.md") {
+    return "core";
+  }
   return "other";
 }
 
@@ -337,7 +387,7 @@ export class KnowledgeGraph {
   private dirty = false;
 
   constructor(workspacePath: string) {
-    this.graphPath = join(workspacePath, ".memory-graph.json");
+    this.graphPath = join(workspacePath, ".memory-qdrant", "graph.json");
   }
 
   async load(): Promise<void> {
@@ -346,13 +396,17 @@ export class KnowledgeGraph {
       const raw = JSON.parse(data) as Record<string, GraphNode>;
       this.nodes = new Map(Object.entries(raw));
     } catch {
-      // Graph doesn't exist yet
+      // Graph doesn't exist yet; ensure directory exists
+      await mkdir(join(this.graphPath, ".."), { recursive: true });
     }
   }
 
   async save(): Promise<void> {
-    if (!this.dirty) return;
+    if (!this.dirty) {
+      return;
+    }
     const obj = Object.fromEntries(this.nodes);
+    await mkdir(join(this.graphPath, ".."), { recursive: true });
     await writeFile(this.graphPath, JSON.stringify(obj, null, 2));
     this.dirty = false;
   }
@@ -376,7 +430,9 @@ export class KnowledgeGraph {
       // Handle aliases [[Link|Alias]]
       const link = match[1].split("|")[0].trim();
       // Skip empty links
-      if (link) links.push(link);
+      if (link) {
+        links.push(link);
+      }
     }
     return links;
   }
@@ -432,7 +488,9 @@ export class KnowledgeGraph {
 
   removeFile(file: string): void {
     const node = this.nodes.get(file);
-    if (!node) return;
+    if (!node) {
+      return;
+    }
 
     // Remove backlinks from outgoing links
     for (const link of node.links) {
@@ -477,7 +535,9 @@ export class KnowledgeGraph {
       }
     }
 
-    if (!node) return { links: [], backlinks: [] };
+    if (!node) {
+      return { links: [], backlinks: [] };
+    }
     return { links: node.links, backlinks: node.backlinks };
   }
 
@@ -510,7 +570,7 @@ export class TextIndex {
   private dirty = false;
 
   constructor(workspacePath: string) {
-    this.indexPath = join(workspacePath, ".memory-index.json");
+    this.indexPath = join(workspacePath, ".memory-qdrant", "index.json");
     this.index = new MiniSearch({
       fields: ["text", "file"], // Fields to index
       storeFields: ["id", "file", "startLine", "endLine", "text", "source"], // Fields to return
@@ -528,7 +588,6 @@ export class TextIndex {
 
       // Handle the case where we stored both the index and the documents
       const indexData = parsed.index !== undefined ? parsed.index : parsed;
-      const storedDocs = parsed.documents !== undefined ? parsed.documents : [];
 
       if (indexData && typeof indexData === "object" && indexData.documentCount !== undefined) {
         this.index = MiniSearch.loadJSON(JSON.stringify(indexData), {
@@ -540,13 +599,16 @@ export class TextIndex {
         // but we'll use them for removeByFile if they were provided.
         // We'll store them in an internal map.
       }
-    } catch (err) {
-      // Index doesn't exist yet, start fresh
+    } catch {
+      // Index doesn't exist yet; ensure directory exists
+      await mkdir(join(this.indexPath, ".."), { recursive: true });
     }
   }
 
   async save(): Promise<void> {
-    if (!this.dirty) return;
+    if (!this.dirty) {
+      return;
+    }
 
     // MiniSearch toJSON returns the index object.
     // We'll wrap it to potentially include more metadata in the future.
@@ -557,12 +619,15 @@ export class TextIndex {
       // However, to keep the file small and since it's a cache, we'll just save the index.
     };
 
+    await mkdir(join(this.indexPath, ".."), { recursive: true });
     await writeFile(this.indexPath, JSON.stringify(data));
     this.dirty = false;
   }
 
   add(chunks: MemoryChunk[]): void {
-    if (chunks.length === 0) return;
+    if (chunks.length === 0) {
+      return;
+    }
 
     const docs = chunks.map((c) => ({
       id: c.id,
@@ -608,7 +673,7 @@ export class TextIndex {
     }
   }
 
-  search(query: string, limit: number): any[] {
+  search(query: string, limit: number): unknown[] {
     return this.index.search(query, { limit });
   }
 }
@@ -624,26 +689,77 @@ export class QdrantClient {
   ) {}
 
   async ensureCollection(vectorSize: number): Promise<void> {
-    const collections = await this.fetch<{ result: { collections: Array<{ name: string }> } }>(
-      "/collections",
+    const { result } = await this.fetch<{ result: { exists: boolean } }>(
+      `/collections/${this.collection}/exists`,
     );
 
-    const exists = collections.result.collections.some((c) => c.name === this.collection);
-    if (exists) return;
+    if (!result.exists) {
+      await this.fetch(`/collections/${this.collection}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          vectors: {
+            size: vectorSize,
+            distance: "Cosine",
+          },
+          // Scalar quantization: ~4x memory reduction with <1% accuracy loss
+          quantization_config: {
+            scalar: {
+              type: "int8",
+              quantile: 0.99,
+              always_ram: true,
+            },
+          },
+        }),
+      });
+    }
 
-    await this.fetch(`/collections/${this.collection}`, {
+    // Ensure payload indexes exist (idempotent — Qdrant ignores if already present).
+    // Called on every startup so that new indexes are applied to existing collections.
+    await this.ensurePayloadIndexes();
+  }
+
+  /**
+   * Create keyword payload indexes for fields used in filtering.
+   * Also creates a principal integer index for capturedAt (time-based queries).
+   * Idempotent: Qdrant ignores if index already exists.
+   */
+  async ensurePayloadIndexes(): Promise<void> {
+    const keywordFields = ["file", "category", "source"];
+    for (const field of keywordFields) {
+      await this.fetch(`/collections/${this.collection}/index`, {
+        method: "PUT",
+        body: JSON.stringify({
+          field_name: field,
+          field_schema: "keyword",
+        }),
+      });
+    }
+
+    // Add principal index for capturedAt (timestamp-based queries)
+    // is_principal optimizes storage for queries filtered by this field
+    await this.fetch(`/collections/${this.collection}/index`, {
       method: "PUT",
       body: JSON.stringify({
-        vectors: {
-          size: vectorSize,
-          distance: "Cosine",
+        field_name: "capturedAt",
+        field_schema: {
+          type: "integer",
+          range: true,
+          lookup: false,
+          is_principal: true,
         },
       }),
     });
   }
 
+  /**
+   * Health check: verify Qdrant is reachable.
+   */
+  async healthCheck(): Promise<void> {
+    await this.fetch("/");
+  }
+
   async deleteByFile(file: string): Promise<void> {
-    await this.fetch(`/collections/${this.collection}/points/delete`, {
+    await this.fetch(`/collections/${this.collection}/points/delete?wait=true`, {
       method: "POST",
       body: JSON.stringify({
         filter: {
@@ -653,8 +769,67 @@ export class QdrantClient {
     });
   }
 
+  /**
+   * Batch upsert: atomically delete old points and insert new ones for a file.
+   * Uses Qdrant's batch API for atomic operations (avoids race conditions).
+   */
+  async batchUpsertFile(
+    file: string,
+    chunks: MemoryChunk[],
+    embeddings: number[][],
+    kg?: KnowledgeGraph,
+  ): Promise<void> {
+    if (chunks.length === 0) {
+      return;
+    }
+
+    const points = chunks.map((chunk, i) => {
+      const { tags: frontmatterTags, metadata: frontmatterMeta } = parseYamlFrontmatter(chunk.text);
+      const headers = extractHeaders(chunk.text);
+      const category = inferCategory(chunk.file);
+      const links = kg ? kg.getLinks(chunk.file) || [] : [];
+
+      return {
+        id: Number(chunk.id),
+        vector: embeddings[i],
+        payload: {
+          file: chunk.file,
+          startLine: chunk.startLine,
+          endLine: chunk.endLine,
+          text: chunk.text,
+          hash: chunk.hash,
+          tags: [...new Set([...frontmatterTags, ...headers])],
+          links: links,
+          category: category,
+          metadata: frontmatterMeta,
+        },
+      };
+    });
+
+    // Batch API: atomic delete + upsert (avoids race conditions)
+    await this.fetch(`/collections/${this.collection}/points/batch?wait=true`, {
+      method: "POST",
+      body: JSON.stringify({
+        operations: [
+          {
+            delete: {
+              filter: {
+                must: [{ key: "file", match: { value: file } }],
+              },
+            },
+          },
+          {
+            upsert: { points },
+          },
+        ],
+      }),
+    });
+  }
+
   async upsert(chunks: MemoryChunk[], embeddings: number[][], kg?: KnowledgeGraph): Promise<void> {
-    if (chunks.length === 0) return;
+    if (chunks.length === 0) {
+      return;
+    }
 
     const points = chunks.map((chunk, i) => {
       const { tags: frontmatterTags, metadata: frontmatterMeta } = parseYamlFrontmatter(chunk.text);
@@ -679,7 +854,7 @@ export class QdrantClient {
       };
     });
 
-    await this.fetch(`/collections/${this.collection}/points`, {
+    await this.fetch(`/collections/${this.collection}/points?wait=true`, {
       method: "PUT",
       body: JSON.stringify({ points }),
     });
@@ -702,7 +877,7 @@ export class QdrantClient {
       },
     };
 
-    await this.fetch(`/collections/${this.collection}/points`, {
+    await this.fetch(`/collections/${this.collection}/points?wait=true`, {
       method: "PUT",
       body: JSON.stringify({ points: [point] }),
     });
@@ -744,7 +919,7 @@ export class QdrantClient {
         offset,
         filter,
         with_payload: ["text", "category", "capturedAt", "sessionKey"],
-        with_vectors: false,
+        with_vector: false,
       }),
     });
 
@@ -762,9 +937,9 @@ export class QdrantClient {
   }
 
   async deleteCaptured(id: string): Promise<void> {
-    await this.fetch(`/collections/${this.collection}/points/delete`, {
+    await this.fetch(`/collections/${this.collection}/points/delete?wait=true`, {
       method: "POST",
-      body: JSON.stringify({ points: [id] }),
+      body: JSON.stringify({ points: [Number(id)] }),
     });
   }
 
@@ -783,6 +958,7 @@ export class QdrantClient {
           endLine: number;
           text: string;
           source?: string;
+          capturedAt?: number;
         };
       }>;
     }>(`/collections/${this.collection}/points/search`, {
@@ -791,7 +967,7 @@ export class QdrantClient {
         vector,
         limit,
         score_threshold: scoreThreshold,
-        with_payload: true,
+        with_payload: ["file", "startLine", "endLine", "text", "source", "capturedAt"],
       }),
     });
 
@@ -808,6 +984,7 @@ export class QdrantClient {
           : hit.payload.file.startsWith("vault/")
             ? "vault"
             : "workspace",
+      capturedAt: hit.payload.capturedAt,
     }));
   }
 
@@ -868,6 +1045,8 @@ export class QdrantClient {
 // ============================================================================
 
 export class OllamaEmbeddings {
+  private cachedDimensions: number | null = null;
+
   constructor(
     private readonly url: string,
     private readonly model: string,
@@ -891,13 +1070,72 @@ export class OllamaEmbeddings {
     return data.embedding;
   }
 
+  /**
+   * Batch embed using Ollama's /api/embed endpoint (v0.4.0+).
+   * Falls back to sequential /api/embeddings if the batch endpoint fails.
+   */
   async embedBatch(texts: string[]): Promise<number[][]> {
+    if (texts.length === 0) {
+      return [];
+    }
+    if (texts.length === 1) {
+      const vec = await this.embed(texts[0]);
+      return [vec];
+    }
+
+    try {
+      const response = await fetch(`${this.url}/api/embed`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: this.model,
+          input: texts,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Ollama batch embed: ${response.status}`);
+      }
+
+      const data = (await response.json()) as { embeddings: number[][] };
+      if (data.embeddings && data.embeddings.length === texts.length) {
+        return data.embeddings;
+      }
+      // Unexpected response shape — fall through to sequential
+    } catch {
+      // Batch endpoint not available — fall back to sequential
+    }
+
     return Promise.all(texts.map((text) => this.embed(text)));
   }
 
+  /**
+   * Get embedding dimensions. Cached after first call to avoid wasting an embed call.
+   */
   async getDimensions(): Promise<number> {
+    if (this.cachedDimensions !== null) {
+      return this.cachedDimensions;
+    }
     const testVector = await this.embed("test");
-    return testVector.length;
+    this.cachedDimensions = testVector.length;
+    return this.cachedDimensions;
+  }
+
+  /**
+   * Health check: verify Ollama is reachable and the model is available.
+   */
+  async healthCheck(): Promise<void> {
+    const response = await fetch(`${this.url}/api/tags`);
+    if (!response.ok) {
+      throw new Error(`Ollama health check failed: ${response.status}`);
+    }
+    const data = (await response.json()) as { models?: Array<{ name: string }> };
+    const modelExists = data.models?.some((m) => m.name === this.model);
+    if (!modelExists) {
+      throw new Error(
+        `Ollama model "${this.model}" not found. Available: ${data.models?.map((m) => m.name).join(", ") || "none"}`,
+      );
+    }
   }
 }
 
@@ -953,7 +1191,9 @@ export function chunkText(text: string, targetWords = 400, overlapWords = 80): M
           const words = currentChunk[j].split(/\s+/).filter(Boolean).length;
           overlapCount += words;
           overlapLines.unshift(currentChunk[j]);
-          if (overlapCount >= overlapWords) break;
+          if (overlapCount >= overlapWords) {
+            break;
+          }
         }
         chunkStartLine = chunkStartLine + currentChunk.length - overlapLines.length;
         currentChunk = overlapLines;
@@ -980,21 +1220,16 @@ export async function indexFile(
   const content = await readFile(filePath, "utf-8");
   const chunks = chunkText(content);
 
-  if (chunks.length === 0) return 0;
+  if (chunks.length === 0) {
+    return 0;
+  }
 
   // Set file and compute IDs
   const processedChunks = chunks.map((chunk) => {
-    const hash = createHash("sha256")
-      .update(`${relPath}:${chunk.startLine}-${chunk.endLine}`)
-      .digest();
-    // Convert first 8 bytes to unsigned 64-bit integer
-    const id = Number(BigInt(hash.readBigUInt64BE(0)) & BigInt("0x7FFFFFFFFFFFFFFF")).toString();
+    const id = generatePointId(`${relPath}:${chunk.startLine}-${chunk.endLine}`);
     const contentHash = createHash("sha256").update(chunk.text).digest("hex");
     return { ...chunk, id, file: relPath, hash: contentHash };
   });
-
-  // Delete old chunks for this file (Vector DB)
-  await qdrant.deleteByFile(relPath);
 
   // Update Text Index (BM25)
   if (textIndex) {
@@ -1007,9 +1242,9 @@ export async function indexFile(
     knowledgeGraph.updateFile(relPath, content);
   }
 
-  // Generate embeddings and upsert
+  // Generate embeddings and batch upsert (atomic delete + insert)
   const vectors = await embeddings.embedBatch(processedChunks.map((c) => c.text));
-  await qdrant.upsert(processedChunks, vectors, knowledgeGraph);
+  await qdrant.batchUpsertFile(relPath, processedChunks, vectors, knowledgeGraph);
 
   return processedChunks.length;
 }
@@ -1029,7 +1264,7 @@ export async function findMarkdownFiles(dir: string): Promise<string[]> {
         files.push(fullPath);
       }
     }
-  } catch (err) {
+  } catch {
     // Ignore permission errors, missing dirs
   }
 
@@ -1062,7 +1297,9 @@ export async function indexDirectory(
 }
 
 export function truncateSnippet(text: string, maxChars = 700): string {
-  if (text.length <= maxChars) return text;
+  if (text.length <= maxChars) {
+    return text;
+  }
   return text.slice(0, maxChars) + "...";
 }
 
@@ -1092,6 +1329,10 @@ const memoryQdrantPlugin = {
       autoRecall: { type: "boolean" },
       autoRecallLimit: { type: "number" },
       autoRecallMinScore: { type: "number" },
+      // Recency scoring
+      recencyEnabled: { type: "boolean" },
+      recencyHalfLifeDays: { type: "number" },
+      recencyWeight: { type: "number" },
       // Auto-capture
       autoCapture: { type: "boolean" },
       autoCaptureMax: { type: "number" },
@@ -1103,6 +1344,7 @@ const memoryQdrantPlugin = {
   },
 
   register(api: OpenClawPluginApi) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const workspaceDir = (api as any).workspaceDir || process.cwd();
     const cfg = parseConfig(api.pluginConfig, workspaceDir);
 
@@ -1123,21 +1365,48 @@ const memoryQdrantPlugin = {
     let indexing = false;
     let indexingPromise: Promise<void> | null = null;
     let fileWatcher: ReturnType<typeof watch> | null = null;
+    let debounceTimeout: NodeJS.Timeout | null = null;
 
     // Auto-capture rate limiting per conversation
     const captureWindow = new Map<string, number[]>();
+    let captureWindowCleanupTimer: NodeJS.Timeout | null = null;
+
+    // Periodic cleanup of stale conversation keys from captureWindow
+    const cleanupCaptureWindow = () => {
+      const now = Date.now();
+      const windowMs = cfg.autoCaptureWindowMs;
+      let cleaned = 0;
+      for (const [key, timestamps] of captureWindow.entries()) {
+        const recent = timestamps.filter((ts) => now - ts <= windowMs);
+        if (recent.length === 0) {
+          captureWindow.delete(key);
+          cleaned++;
+        } else if (recent.length < timestamps.length) {
+          captureWindow.set(key, recent);
+        }
+      }
+      if (cleaned > 0) {
+        api.logger.info(
+          `memory-qdrant: cleaned ${cleaned} stale conversation keys from captureWindow`,
+        );
+      }
+    };
 
     // Debounced indexing
-    const scheduleIndex = (() => {
-      let timeout: NodeJS.Timeout | null = null;
-      return () => {
-        if (timeout) clearTimeout(timeout);
-        timeout = setTimeout(() => runIndexing(), cfg.watcherDebounceMs);
-      };
-    })();
+    const scheduleIndex = () => {
+      if (debounceTimeout) {
+        clearTimeout(debounceTimeout);
+      }
+      debounceTimeout = setTimeout(() => {
+        debounceTimeout = null;
+        runIndexing();
+      }, cfg.watcherDebounceMs);
+    };
 
     async function runIndexing(): Promise<void> {
-      if (indexing) return;
+      if (indexing) {
+        return;
+      }
       indexing = true;
 
       try {
@@ -1299,21 +1568,34 @@ const memoryQdrantPlugin = {
             const maxTextScore =
               textHits.reduce((max, hit) => Math.max(max, hit.score || 0), 0) || 1;
 
-            const textResults: MemorySearchResult[] = textHits.map((hit: any) => ({
-              id: String(hit.id),
-              file: hit.file,
-              startLine: hit.startLine ?? 1,
-              endLine: hit.endLine ?? 1,
-              snippet: truncateSnippet(hit.text || ""),
-              score: (hit.score || 0) / maxTextScore,
-              source:
-                hit.source ||
-                (hit.file?.startsWith("vault/")
-                  ? "vault"
-                  : hit.file?.startsWith("captured/")
-                    ? "captured"
-                    : "workspace"),
-            }));
+            const textResults: MemorySearchResult[] = textHits.map((hit: unknown) => {
+              const h = hit as {
+                id?: unknown;
+                file?: string;
+                startLine?: number;
+                endLine?: number;
+                text?: string;
+                score?: number;
+                source?: string;
+                category?: string;
+              };
+              return {
+                id: String(h.id),
+                file: h.file!,
+                startLine: h.startLine ?? 1,
+                endLine: h.endLine ?? 1,
+                snippet: truncateSnippet(h.text || ""),
+                score: (h.score || 0) / maxTextScore,
+                source:
+                  h.source ||
+                  (h.file?.startsWith("vault/")
+                    ? "vault"
+                    : h.file?.startsWith("captured/")
+                      ? "captured"
+                      : "workspace"),
+                category: h.category || "note",
+              };
+            });
 
             // If vector search failed, use text-only; otherwise blend both
             const vectorWeight = embeddingError ? 0 : 0.7;
@@ -1343,13 +1625,29 @@ const memoryQdrantPlugin = {
                 const related = knowledgeGraph.getRelated(res.file);
                 const relatedFiles = [...related.links, ...related.backlinks].slice(0, 3);
 
+                // Apply recency decay for captured memories (exponential decay)
+                let recencyScore = 1.0;
+                if (cfg.recencyEnabled && res.capturedAt) {
+                  const ageMs = Date.now() - res.capturedAt;
+                  const ageDays = ageMs / (24 * 60 * 60 * 1000);
+                  const halfLife = cfg.recencyHalfLifeDays;
+                  recencyScore = Math.exp((-Math.LN2 * ageDays) / halfLife);
+                }
+
+                // Combine vector + text + recency
+                const baseScore = (vectorScore ?? 0) * vectorWeight + (textScore ?? 0) * textWeight;
+                const finalScore =
+                  res.capturedAt && cfg.recencyEnabled
+                    ? baseScore * (1 - cfg.recencyWeight) + recencyScore * cfg.recencyWeight
+                    : baseScore;
+
                 return {
                   ...res,
-                  score: (vectorScore ?? 0) * vectorWeight + (textScore ?? 0) * textWeight,
+                  score: finalScore,
                   related: relatedFiles.length > 0 ? relatedFiles : undefined,
                 };
               })
-              .sort((a, b) => b.score - a.score)
+              .toSorted((a, b) => b.score - a.score)
               .slice(0, maxResults);
 
             return jsonResult({
@@ -1554,7 +1852,7 @@ const memoryQdrantPlugin = {
           "Analyze the vault for orphaned files and suggest improvements. Uses Graph Knowledge to find notes with no backlinks.",
         parameters: MemoryOrganizeSchema,
         execute: async (_toolCallId, params) => {
-          const dryRun = params.dryRun !== false;
+          const _dryRun = params.dryRun !== false;
 
           try {
             // Find orphans (files with no backlinks)
@@ -1597,54 +1895,42 @@ const memoryQdrantPlugin = {
     if (cfg.autoRecall) {
       api.on("before_agent_start", async (event) => {
         // Skip if prompt is too short or already has memories
-        if (!event.prompt || event.prompt.length < 10) return;
-        if (event.prompt.includes("<relevant-memories>")) return;
+        if (!event.prompt || event.prompt.length < 10) {
+          return;
+        }
+        if (event.prompt.includes("<relevant-memories>")) {
+          return;
+        }
 
         try {
           // Timeout protection: max 3 seconds for auto-recall (don't block agent)
-          const timeoutMs = 3000;
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+          const timeoutPromise = new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new Error("auto-recall timeout")), 3000);
+          });
 
-          try {
-            const vector = await Promise.race([
-              embeddings.embed(event.prompt),
-              new Promise<never>((_, reject) =>
-                controller.signal.addEventListener("abort", () =>
-                  reject(new Error("embedding timeout")),
-                ),
-              ),
-            ]);
+          const vector = await Promise.race([embeddings.embed(event.prompt), timeoutPromise]);
 
-            const results = await Promise.race([
-              qdrant.search(vector, cfg.autoRecallLimit, cfg.autoRecallMinScore),
-              new Promise<never>((_, reject) =>
-                controller.signal.addEventListener("abort", () =>
-                  reject(new Error("search timeout")),
-                ),
-              ),
-            ]);
+          const results = await Promise.race([
+            qdrant.search(vector, cfg.autoRecallLimit, cfg.autoRecallMinScore),
+            timeoutPromise,
+          ]);
 
-            clearTimeout(timeoutId);
-
-            if (results.length === 0) return;
-
-            const memoryContext = results
-              .map(
-                (r) =>
-                  `- [${r.source}/${r.file}] ${r.snippet.slice(0, 200)}${r.snippet.length > 200 ? "..." : ""}`,
-              )
-              .join("\n");
-
-            api.logger.info(`memory-qdrant: auto-recall injecting ${results.length} memories`);
-
-            return {
-              prependContext: `<relevant-memories>\nThe following memories may be relevant:\n${memoryContext}\n</relevant-memories>\n\n`,
-            };
-          } catch (err) {
-            clearTimeout(timeoutId);
-            throw err;
+          if (results.length === 0) {
+            return;
           }
+
+          const memoryContext = results
+            .map(
+              (r) =>
+                `- [${r.source}/${r.file}] ${r.snippet.slice(0, 200)}${r.snippet.length > 200 ? "..." : ""}`,
+            )
+            .join("\n");
+
+          api.logger.info(`memory-qdrant: auto-recall injecting ${results.length} memories`);
+
+          return {
+            prependContext: `<relevant-memories>\nThe following memories may be relevant:\n${memoryContext}\n</relevant-memories>\n\n`,
+          };
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);
           if (errMsg.includes("timeout")) {
@@ -1664,12 +1950,17 @@ const memoryQdrantPlugin = {
       api.on("message_received", async (event, ctx) => {
         try {
           const text = event?.content;
-          if (!text || typeof text !== "string") return;
+          if (!text || typeof text !== "string") {
+            return;
+          }
 
           // Filter for capturable content
-          if (!shouldCapture(text)) return;
+          if (!shouldCapture(text)) {
+            return;
+          }
 
           // Rate limit per conversation/session
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const key = ctx?.conversationId || (ctx as any)?.sessionKey || event?.from || "default";
           const now = Date.now();
           const windowMs = cfg.autoCaptureWindowMs;
@@ -1700,15 +1991,13 @@ const memoryQdrantPlugin = {
           }
 
           const category = detectCategory(text);
-          const hashBuf = createHash("sha256").update(`${Date.now()}-${text}`).digest();
-          const id = Number(
-            BigInt(hashBuf.readBigUInt64BE(0)) & BigInt("0x7FFFFFFFFFFFFFFF"),
-          ).toString();
+          const id = generatePointId(`${Date.now()}-${text}`);
           const memory: CapturedMemory = {
             id,
             text,
             category,
             capturedAt: Date.now(),
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             sessionKey: (ctx as any)?.sessionKey,
           };
 
@@ -1728,12 +2017,41 @@ const memoryQdrantPlugin = {
       id: "memory-qdrant-indexer",
       start: async () => {
         const features = [];
-        if (cfg.autoRecall) features.push("auto-recall");
-        if (cfg.autoCapture) features.push("auto-capture");
+        if (cfg.autoRecall) {
+          features.push("auto-recall");
+        }
+        if (cfg.autoCapture) {
+          features.push("auto-capture");
+        }
 
         api.logger.info(
           `memory-qdrant: initialized (vault: ${resolvedVaultPath}, collection: ${cfg.collection}, features: [${features.join(", ") || "none"}])`,
         );
+
+        // Health check: verify Qdrant and Ollama are reachable before proceeding
+        try {
+          api.logger.info("memory-qdrant: checking Qdrant connectivity...");
+          await qdrant.healthCheck();
+          api.logger.info(`memory-qdrant: Qdrant OK at ${cfg.qdrantUrl}`);
+        } catch (err) {
+          api.logger.error(
+            `memory-qdrant: Qdrant not reachable at ${cfg.qdrantUrl} — is it running? Error: ${err}`,
+          );
+          return;
+        }
+
+        try {
+          api.logger.info("memory-qdrant: checking Ollama connectivity...");
+          await embeddings.healthCheck();
+          api.logger.info(
+            `memory-qdrant: Ollama OK at ${cfg.ollamaUrl}, model "${cfg.embeddingModel}" available`,
+          );
+        } catch (err) {
+          api.logger.error(
+            `memory-qdrant: Ollama not reachable at ${cfg.ollamaUrl} or model "${cfg.embeddingModel}" missing — Error: ${err}`,
+          );
+          return;
+        }
 
         await textIndex.load();
         await knowledgeGraph.load();
@@ -1741,7 +2059,7 @@ const memoryQdrantPlugin = {
         if (cfg.autoIndex) {
           try {
             await stat(resolvedVaultPath);
-          } catch (err) {
+          } catch {
             api.logger.error(
               `memory-qdrant: vaultPath missing or inaccessible: ${resolvedVaultPath}`,
             );
@@ -1751,28 +2069,56 @@ const memoryQdrantPlugin = {
           // Initial indexing
           indexingPromise = runIndexing();
 
-          // Watch for changes
-          const watchPaths = [
+          // Watch for changes (validate paths first)
+          const candidatePaths = [
             resolvedVaultPath,
             join(resolvedWorkspacePath, "MEMORY.md"),
             join(resolvedWorkspacePath, "memory"),
             ...extraRoots.map((entry) => entry.resolved),
           ];
 
-          fileWatcher = watch(watchPaths, {
-            ignored: /(^|[\/\\])\../, // Ignore dotfiles
-            persistent: true,
-            ignoreInitial: true,
-          });
+          // Validate paths before watching to avoid chokidar issues
+          const watchPaths: string[] = [];
+          for (const path of candidatePaths) {
+            try {
+              await stat(path);
+              watchPaths.push(path);
+            } catch {
+              api.logger.warn(`memory-qdrant: skipping invalid watch path: ${path}`);
+            }
+          }
 
-          fileWatcher.on("add", scheduleIndex);
-          fileWatcher.on("change", scheduleIndex);
-          fileWatcher.on("unlink", scheduleIndex);
+          if (watchPaths.length === 0) {
+            api.logger.warn("memory-qdrant: no valid paths to watch");
+          } else {
+            fileWatcher = watch(watchPaths, {
+              ignored: /(^|[/\\])\../, // Ignore dotfiles
+              persistent: true,
+              ignoreInitial: true,
+            });
 
-          api.logger.info(`memory-qdrant: watching ${watchPaths.length} paths for changes`);
+            fileWatcher.on("add", scheduleIndex);
+            fileWatcher.on("change", scheduleIndex);
+            fileWatcher.on("unlink", scheduleIndex);
+
+            api.logger.info(`memory-qdrant: watching ${watchPaths.length} paths for changes`);
+          }
+        }
+
+        // Start periodic captureWindow cleanup (every 5 minutes)
+        if (cfg.autoCapture) {
+          captureWindowCleanupTimer = setInterval(cleanupCaptureWindow, 5 * 60 * 1000);
         }
       },
       stop: async () => {
+        if (captureWindowCleanupTimer) {
+          clearInterval(captureWindowCleanupTimer);
+          captureWindowCleanupTimer = null;
+        }
+        if (debounceTimeout) {
+          clearTimeout(debounceTimeout);
+          debounceTimeout = null;
+        }
         if (fileWatcher) {
           await fileWatcher.close();
           fileWatcher = null;
