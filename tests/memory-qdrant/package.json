@@ -1,0 +1,32 @@
+{
+  "name": "memory-qdrant-tests",
+  "version": "1.0.0",
+  "description": "Integration tests for memory-qdrant plugin",
+  "keywords": [
+    "embedding",
+    "memory",
+    "qdrant",
+    "semantic-search",
+    "vitest"
+  ],
+  "license": "MIT",
+  "author": "Sabiá",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:coverage": "vitest --coverage",
+    "test:debug": "vitest --inspect-brk --inspect --single-thread",
+    "test:ui": "vitest --ui",
+    "test:watch": "vitest --watch"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^7.1.1",
+    "@typescript-eslint/parser": "^7.1.1",
+    "@vitest/coverage-v8": "^2.1.9",
+    "@vitest/ui": "^2.1.9",
+    "eslint": "^8.57.0",
+    "prettier": "^3.2.5",
+    "typescript": "^5.4.5",
+    "vitest": "^2.1.9"
+  }
+}
