@@ -687,7 +687,7 @@ export class QdrantClient {
 
   async upsertCaptured(memory: CapturedMemory, embedding: number[]): Promise<void> {
     const point = {
-      id: memory.id,
+      id: Number(memory.id),
       vector: embedding,
       payload: {
         file: `captured/${memory.category}`,
