@@ -1,3 +1,0 @@
-# Session: Low Quality
-
-Done.
