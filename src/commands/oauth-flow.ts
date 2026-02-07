@@ -3,7 +3,8 @@ import type { WizardPrompter } from "../wizard/prompts.js";
 
 type OAuthPrompt = { message: string; placeholder?: string };
 
-const validateRequiredInput = (value: string) => (value.trim().length > 0 ? undefined : "Required");
+const validateRequiredInput = (value: string | undefined) =>
+  value && value.trim().length > 0 ? undefined : "Required";
 
 export function createVpsAwareOAuthHandlers(params: {
   isRemote: boolean;
