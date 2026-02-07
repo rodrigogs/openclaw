@@ -601,7 +601,7 @@ describe("OllamaEmbeddings", () => {
       json: async () => ({ embedding: mockEmbedding }),
     });
 
-    const embeddings = new OllamaEmbeddings("http://localhost:11434", "nomic-embed-text");
+    const embeddings = new OllamaEmbeddings("http://localhost:11434", "qwen3-embedding:4b");
     const result = await embeddings.embed("test text");
 
     expect(result).toHaveLength(768);
@@ -615,7 +615,7 @@ describe("OllamaEmbeddings", () => {
       json: async () => ({ embeddings: [mockEmbeddingA, mockEmbeddingB] }),
     });
 
-    const embeddings = new OllamaEmbeddings("http://localhost:11434", "nomic-embed-text");
+    const embeddings = new OllamaEmbeddings("http://localhost:11434", "qwen3-embedding:4b");
     const result = await embeddings.embedBatch(["a", "b"]);
     expect(result).toHaveLength(2);
     expect(result[0]).toEqual(mockEmbeddingA);
@@ -637,7 +637,7 @@ describe("OllamaEmbeddings", () => {
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ embedding: mockEmbedding }) });
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ embedding: mockEmbedding }) });
 
-    const embeddings = new OllamaEmbeddings("http://localhost:11434", "nomic-embed-text");
+    const embeddings = new OllamaEmbeddings("http://localhost:11434", "qwen3-embedding:4b");
     const result = await embeddings.embedBatch(["a", "b"]);
     expect(result).toHaveLength(2);
     // 1 bulk attempt + 2 sequential
@@ -648,7 +648,7 @@ describe("OllamaEmbeddings", () => {
     const mockEmbedding = [0.1, 0.2];
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ embedding: mockEmbedding }) });
 
-    const embeddings = new OllamaEmbeddings("http://localhost:11434", "nomic-embed-text");
+    const embeddings = new OllamaEmbeddings("http://localhost:11434", "qwen3-embedding:4b");
     const result = await embeddings.embedBatch(["single"]);
     expect(result).toHaveLength(1);
     expect(result[0]).toEqual(mockEmbedding);
@@ -656,7 +656,7 @@ describe("OllamaEmbeddings", () => {
   });
 
   it("embedBatch returns empty array for empty input", async () => {
-    const embeddings = new OllamaEmbeddings("http://localhost:11434", "nomic-embed-text");
+    const embeddings = new OllamaEmbeddings("http://localhost:11434", "qwen3-embedding:4b");
     const result = await embeddings.embedBatch([]);
     expect(result).toHaveLength(0);
     expect(mockFetch).not.toHaveBeenCalled();
@@ -668,7 +668,7 @@ describe("OllamaEmbeddings", () => {
       json: async () => ({ embedding: [0.1, 0.2, 0.3] }),
     });
 
-    const embeddings = new OllamaEmbeddings("http://localhost:11434", "nomic-embed-text");
+    const embeddings = new OllamaEmbeddings("http://localhost:11434", "qwen3-embedding:4b");
     const dims1 = await embeddings.getDimensions();
     expect(dims1).toBe(3);
     expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -682,24 +682,24 @@ describe("OllamaEmbeddings", () => {
   it("throws on errors", async () => {
     mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
 
-    const embeddings = new OllamaEmbeddings("http://localhost:11434", "nomic-embed-text");
+    const embeddings = new OllamaEmbeddings("http://localhost:11434", "qwen3-embedding:4b");
     await expect(embeddings.embed("x")).rejects.toThrow();
   });
 
   it("healthCheck succeeds when model is available", async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ models: [{ name: "nomic-embed-text" }, { name: "other-model" }] }),
+      json: async () => ({ models: [{ name: "qwen3-embedding:4b" }, { name: "other-model" }] }),
     });
 
-    const embeddings = new OllamaEmbeddings("http://localhost:11434", "nomic-embed-text");
+    const embeddings = new OllamaEmbeddings("http://localhost:11434", "qwen3-embedding:4b");
     await expect(embeddings.healthCheck()).resolves.toBeUndefined();
   });
 
   it("healthCheck fails when Ollama is unreachable", async () => {
     mockFetch.mockResolvedValueOnce({ ok: false, status: 503 });
 
-    const embeddings = new OllamaEmbeddings("http://localhost:11434", "nomic-embed-text");
+    const embeddings = new OllamaEmbeddings("http://localhost:11434", "qwen3-embedding:4b");
     await expect(embeddings.healthCheck()).rejects.toThrow("health check failed");
   });
 
@@ -1325,7 +1325,10 @@ describe("service start/stop", () => {
 
     mockFetch.mockImplementation(async (url: string) => {
       if (url.includes("/api/tags")) {
-        return { ok: true, json: async () => ({ models: [{ name: "nomic-embed-text" }] }) } as any;
+        return {
+          ok: true,
+          json: async () => ({ models: [{ name: "qwen3-embedding:4b" }] }),
+        } as any;
       }
       if (url.includes("/api/embeddings")) {
         return { ok: true, json: async () => ({ embedding: [0.1, 0.2, 0.3] }) } as any;
@@ -1379,7 +1382,10 @@ describe("service start/stop", () => {
 
     mockFetch.mockImplementation(async (url: string) => {
       if (url.includes("/api/tags")) {
-        return { ok: true, json: async () => ({ models: [{ name: "nomic-embed-text" }] }) } as any;
+        return {
+          ok: true,
+          json: async () => ({ models: [{ name: "qwen3-embedding:4b" }] }),
+        } as any;
       }
       return { ok: true, json: async () => ({}) } as any;
     });
@@ -1600,7 +1606,10 @@ describe("service start/stop", () => {
 
     mockFetch.mockImplementation(async (url: string) => {
       if (url.includes("/api/tags")) {
-        return { ok: true, json: async () => ({ models: [{ name: "nomic-embed-text" }] }) } as any;
+        return {
+          ok: true,
+          json: async () => ({ models: [{ name: "qwen3-embedding:4b" }] }),
+        } as any;
       }
       if (url.includes("/api/embeddings")) {
         return { ok: true, json: async () => ({ embedding: [0.1] }) } as any;
@@ -1707,7 +1716,10 @@ describe("service start/stop", () => {
 
     mockFetch.mockImplementation(async (url: string) => {
       if (url.includes("/api/tags")) {
-        return { ok: true, json: async () => ({ models: [{ name: "nomic-embed-text" }] }) } as any;
+        return {
+          ok: true,
+          json: async () => ({ models: [{ name: "qwen3-embedding:4b" }] }),
+        } as any;
       }
       if (url.includes("/api/embeddings")) {
         return { ok: true, json: async () => ({ embedding: [0.1, 0.2] }) } as any;
@@ -1781,7 +1793,10 @@ describe("memory_organize tool", () => {
 
     mockFetch.mockImplementation(async (url: string) => {
       if (url.includes("/api/tags")) {
-        return { ok: true, json: async () => ({ models: [{ name: "nomic-embed-text" }] }) } as any;
+        return {
+          ok: true,
+          json: async () => ({ models: [{ name: "qwen3-embedding:4b" }] }),
+        } as any;
       }
       return { ok: true, json: async () => ({}) } as any;
     });
@@ -1820,7 +1835,10 @@ describe("memory_organize tool", () => {
 
     mockFetch.mockImplementation(async (url: string) => {
       if (url.includes("/api/tags")) {
-        return { ok: true, json: async () => ({ models: [{ name: "nomic-embed-text" }] }) } as any;
+        return {
+          ok: true,
+          json: async () => ({ models: [{ name: "qwen3-embedding:4b" }] }),
+        } as any;
       }
       return { ok: true, json: async () => ({}) } as any;
     });
@@ -1954,7 +1972,7 @@ describe("edge cases + errors", () => {
   it("OllamaEmbeddings.embed throws on HTTP error", async () => {
     mockFetch.mockResolvedValueOnce({ ok: false, status: 503 });
 
-    const embeddings = new OllamaEmbeddings("http://localhost:11434", "nomic-embed-text");
+    const embeddings = new OllamaEmbeddings("http://localhost:11434", "qwen3-embedding:4b");
     await expect(embeddings.embed("test")).rejects.toThrow("503");
   });
 
@@ -3496,7 +3514,7 @@ describe("Bug Fixes: Debounce Timeout Cleanup", () => {
       if (url.includes("/api/tags")) {
         return Promise.resolve({
           ok: true,
-          json: async () => ({ models: [{ name: "nomic-embed-text" }] }),
+          json: async () => ({ models: [{ name: "qwen3-embedding:4b" }] }),
         });
       }
       if (url.includes("/api/embeddings")) {
@@ -3564,7 +3582,7 @@ describe("Bug Fixes: Path Validation", () => {
       if (url.includes("/api/tags")) {
         return Promise.resolve({
           ok: true,
-          json: async () => ({ models: [{ name: "nomic-embed-text" }] }),
+          json: async () => ({ models: [{ name: "qwen3-embedding:4b" }] }),
         });
       }
       if (url.includes("/api/embeddings")) {
@@ -3622,7 +3640,7 @@ describe("Bug Fixes: Path Validation", () => {
       if (url.includes("/api/tags")) {
         return Promise.resolve({
           ok: true,
-          json: async () => ({ models: [{ name: "nomic-embed-text" }] }),
+          json: async () => ({ models: [{ name: "qwen3-embedding:4b" }] }),
         });
       }
       if (url.includes("/api/embeddings")) {
@@ -3691,7 +3709,7 @@ describe("Bug Fixes: Auto-Recall Promise Leak", () => {
       if (url.includes("/api/tags")) {
         return Promise.resolve({
           ok: true,
-          json: async () => ({ models: [{ name: "nomic-embed-text" }] }),
+          json: async () => ({ models: [{ name: "qwen3-embedding:4b" }] }),
         });
       }
       if (url.includes("/api/embeddings")) {
@@ -3766,7 +3784,7 @@ describe("Bug Fixes: Auto-Recall Promise Leak", () => {
       if (url.includes("/api/tags")) {
         return Promise.resolve({
           ok: true,
-          json: async () => ({ models: [{ name: "nomic-embed-text" }] }),
+          json: async () => ({ models: [{ name: "qwen3-embedding:4b" }] }),
         });
       }
       if (url.includes("/api/embed")) {
@@ -4012,7 +4030,7 @@ describe("Qdrant API: Batch Operations for Atomicity", () => {
     });
 
     const qdrant = new QdrantClient("http://localhost:6333", "test-collection");
-    const embeddings = new OllamaEmbeddings("http://localhost:11434", "nomic-embed-text");
+    const embeddings = new OllamaEmbeddings("http://localhost:11434", "qwen3-embedding:4b");
 
     await indexFile(testFile, "test.md", qdrant, embeddings);
 
