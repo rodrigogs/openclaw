@@ -44,6 +44,8 @@ export type PluginConfig = {
   embeddingModel?: string;
   autoIndex?: boolean;
   extraPaths?: string[];
+  // Logging
+  logLevel?: "silent" | "error" | "warn" | "info" | "debug";
   // Watcher settings
   watcherDebounceMs?: number;
   // Auto-recall settings

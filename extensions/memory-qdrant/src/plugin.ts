@@ -22,6 +22,7 @@ import { shouldCapture, detectCategory } from "./auto-capture.ts";
 import { parseConfig } from "./config.ts";
 import { indexFile, indexDirectory } from "./indexing.ts";
 import { KnowledgeGraph } from "./knowledge-graph.ts";
+import { createPluginLogger } from "./logger.ts";
 import { OllamaEmbeddings } from "./ollama-embeddings.ts";
 import { QdrantClient } from "./qdrant-client.ts";
 import { TextIndex } from "./text-index.ts";
@@ -64,6 +65,8 @@ const memoryQdrantPlugin = {
       autoCaptureDupThreshold: { type: "number" },
       autoCaptureWindowMs: { type: "number" },
       autoCaptureMaxPerWindow: { type: "number" },
+      // Logging
+      logLevel: { type: "string", enum: ["silent", "error", "warn", "info", "debug"] },
     },
     required: ["vaultPath"],
   },
@@ -72,6 +75,7 @@ const memoryQdrantPlugin = {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const workspaceDir = (api as any).workspaceDir || process.cwd();
     const cfg = parseConfig(api.pluginConfig, workspaceDir);
+    const log = createPluginLogger(api.logger, cfg.logLevel);
 
     const resolvedVaultPath = api.resolvePath(cfg.vaultPath);
     const resolvedWorkspacePath = api.resolvePath(cfg.workspacePath);
@@ -111,9 +115,7 @@ const memoryQdrantPlugin = {
         }
       }
       if (cleaned > 0) {
-        api.logger.info(
-          `memory-qdrant: cleaned ${cleaned} stale conversation keys from captureWindow`,
-        );
+        log.debug(`memory-qdrant: cleaned ${cleaned} stale conversation keys from captureWindow`);
       }
     };
 
@@ -135,7 +137,7 @@ const memoryQdrantPlugin = {
       indexing = true;
 
       try {
-        api.logger.info("memory-qdrant: indexing started");
+        log.debug("memory-qdrant: indexing started");
 
         const dims = await embeddings.getDimensions();
         await qdrant.ensureCollection(dims);
@@ -148,7 +150,7 @@ const memoryQdrantPlugin = {
           "vault/",
           qdrant,
           embeddings,
-          api.logger,
+          log,
           textIndex,
           knowledgeGraph,
         );
@@ -175,7 +177,7 @@ const memoryQdrantPlugin = {
           "memory/",
           qdrant,
           embeddings,
-          api.logger,
+          log,
           textIndex,
           knowledgeGraph,
         );
@@ -201,7 +203,7 @@ const memoryQdrantPlugin = {
                 `extra/${extraRoot.index}/`,
                 qdrant,
                 embeddings,
-                api.logger,
+                log,
                 textIndex,
                 knowledgeGraph,
               );
@@ -213,9 +215,9 @@ const memoryQdrantPlugin = {
 
         await textIndex.save();
         await knowledgeGraph.save();
-        api.logger.info(`memory-qdrant: indexed ${totalChunks} chunks`);
+        log.info(`memory-qdrant: indexed ${totalChunks} chunks`);
       } catch (err) {
-        api.logger.error(`memory-qdrant: indexing failed: ${err}`);
+        log.error(`memory-qdrant: indexing failed: ${err}`);
       } finally {
         indexing = false;
       }
@@ -283,7 +285,7 @@ const memoryQdrantPlugin = {
               vectorResults = await qdrant.search(vector, maxResults, minScore);
             } catch (err) {
               embeddingError = err instanceof Error ? err.message : String(err);
-              api.logger.warn(
+              log.warn(
                 `memory-qdrant: vector search failed, falling back to text-only: ${embeddingError}`,
               );
             }
@@ -394,7 +396,7 @@ const memoryQdrantPlugin = {
             });
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
-            api.logger.error(`memory-qdrant: search error: ${message}`);
+            log.error(`memory-qdrant: search error: ${message}`);
             return jsonResult({ results: [], disabled: false, error: message });
           }
         },
@@ -651,7 +653,7 @@ const memoryQdrantPlugin = {
             )
             .join("\n");
 
-          api.logger.info(`memory-qdrant: auto-recall injecting ${results.length} memories`);
+          log.debug(`memory-qdrant: auto-recall injecting ${results.length} memories`);
 
           return {
             prependContext: `<relevant-memories>\nThe following memories may be relevant:\n${memoryContext}\n</relevant-memories>\n\n`,
@@ -659,9 +661,9 @@ const memoryQdrantPlugin = {
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);
           if (errMsg.includes("timeout")) {
-            api.logger.warn(`memory-qdrant: auto-recall timeout (proceeding without memories)`);
+            log.warn(`memory-qdrant: auto-recall timeout (proceeding without memories)`);
           } else {
-            api.logger.warn(`memory-qdrant: auto-recall failed: ${errMsg}`);
+            log.warn(`memory-qdrant: auto-recall failed: ${errMsg}`);
           }
           // Don't return anything; proceed without memories
         }
@@ -670,7 +672,7 @@ const memoryQdrantPlugin = {
 
     // Auto-capture: extract and store important information on message_received
     if (cfg.autoCapture) {
-      api.logger.info("memory-qdrant: registering message_received hook for auto-capture");
+      log.debug("memory-qdrant: registering message_received hook for auto-capture");
 
       api.on("message_received", async (event, ctx) => {
         try {
@@ -704,12 +706,10 @@ const memoryQdrantPlugin = {
           // Check for duplicates
           const dup = await qdrant.searchForDuplicates(vector, cfg.autoCaptureDupThreshold);
           if (dup.error) {
-            api.logger.warn(
-              `memory-qdrant: duplicate check failed (proceeding anyway): ${dup.error}`,
-            );
+            log.warn(`memory-qdrant: duplicate check failed (proceeding anyway): ${dup.error}`);
           }
           if (dup.exists) {
-            api.logger.info(
+            log.debug(
               `memory-qdrant: skipping duplicate (${dup.score.toFixed(2)}): ${text.slice(0, 50)}...`,
             );
             return;
@@ -727,9 +727,9 @@ const memoryQdrantPlugin = {
           };
 
           await qdrant.upsertCaptured(memory, vector);
-          api.logger.info(`memory-qdrant: auto-captured [${category}]: ${text.slice(0, 50)}...`);
+          log.debug(`memory-qdrant: auto-captured [${category}]: ${text.slice(0, 50)}...`);
         } catch (err) {
-          api.logger.warn(`memory-qdrant: auto-capture failed: ${String(err)}`);
+          log.warn(`memory-qdrant: auto-capture failed: ${String(err)}`);
         }
       });
     }
@@ -749,30 +749,30 @@ const memoryQdrantPlugin = {
           features.push("auto-capture");
         }
 
-        api.logger.info(
+        log.info(
           `memory-qdrant: initialized (vault: ${resolvedVaultPath}, collection: ${cfg.collection}, features: [${features.join(", ") || "none"}])`,
         );
 
         // Health check: verify Qdrant and Ollama are reachable before proceeding
         try {
-          api.logger.info("memory-qdrant: checking Qdrant connectivity...");
+          log.debug("memory-qdrant: checking Qdrant connectivity...");
           await qdrant.healthCheck();
-          api.logger.info(`memory-qdrant: Qdrant OK at ${cfg.qdrantUrl}`);
+          log.info(`memory-qdrant: Qdrant OK at ${cfg.qdrantUrl}`);
         } catch (err) {
-          api.logger.error(
+          log.error(
             `memory-qdrant: Qdrant not reachable at ${cfg.qdrantUrl} — is it running? Error: ${err}`,
           );
           return;
         }
 
         try {
-          api.logger.info("memory-qdrant: checking Ollama connectivity...");
+          log.debug("memory-qdrant: checking Ollama connectivity...");
           await embeddings.healthCheck();
-          api.logger.info(
+          log.info(
             `memory-qdrant: Ollama OK at ${cfg.ollamaUrl}, model "${cfg.embeddingModel}" available`,
           );
         } catch (err) {
-          api.logger.error(
+          log.error(
             `memory-qdrant: Ollama not reachable at ${cfg.ollamaUrl} or model "${cfg.embeddingModel}" missing — Error: ${err}`,
           );
           return;
@@ -785,9 +785,7 @@ const memoryQdrantPlugin = {
           try {
             await stat(resolvedVaultPath);
           } catch {
-            api.logger.error(
-              `memory-qdrant: vaultPath missing or inaccessible: ${resolvedVaultPath}`,
-            );
+            log.error(`memory-qdrant: vaultPath missing or inaccessible: ${resolvedVaultPath}`);
             return;
           }
 
@@ -809,12 +807,12 @@ const memoryQdrantPlugin = {
               await stat(path);
               watchPaths.push(path);
             } catch {
-              api.logger.warn(`memory-qdrant: skipping invalid watch path: ${path}`);
+              log.warn(`memory-qdrant: skipping invalid watch path: ${path}`);
             }
           }
 
           if (watchPaths.length === 0) {
-            api.logger.warn("memory-qdrant: no valid paths to watch");
+            log.warn("memory-qdrant: no valid paths to watch");
           } else {
             fileWatcher = watch(watchPaths, {
               ignored: /(^|[/\\])\../, // Ignore dotfiles
@@ -826,7 +824,7 @@ const memoryQdrantPlugin = {
             fileWatcher.on("change", scheduleIndex);
             fileWatcher.on("unlink", scheduleIndex);
 
-            api.logger.info(`memory-qdrant: watching ${watchPaths.length} paths for changes`);
+            log.debug(`memory-qdrant: watching ${watchPaths.length} paths for changes`);
           }
         }
 
@@ -853,7 +851,7 @@ const memoryQdrantPlugin = {
         }
         await textIndex.save();
         await knowledgeGraph.save();
-        api.logger.info("memory-qdrant: stopped");
+        log.info("memory-qdrant: stopped");
       },
     });
   },
