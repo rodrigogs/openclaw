@@ -41,9 +41,16 @@ export function parseConfig(raw: unknown, workspaceDir: string): Required<Plugin
     throw new Error("memory-qdrant: vaultPath is required");
   }
 
+  const validLogLevels = ["silent", "error", "warn", "info", "debug"];
+  const logLevel =
+    typeof cfg.logLevel === "string" && validLogLevels.includes(cfg.logLevel)
+      ? cfg.logLevel
+      : undefined;
+
   return {
     vaultPath: cfg.vaultPath,
     workspacePath: cfg.workspacePath || workspaceDir,
+    logLevel,
     qdrantUrl: cfg.qdrantUrl || DEFAULT_CONFIG.qdrantUrl,
     collection: cfg.collection || DEFAULT_CONFIG.collection,
     ollamaUrl: cfg.ollamaUrl || DEFAULT_CONFIG.ollamaUrl,
