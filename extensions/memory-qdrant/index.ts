@@ -8,6 +8,8 @@ export { default } from "./src/plugin.ts";
 
 // Re-export everything tests and consumers need
 export { generatePointId, truncateSnippet } from "./src/utils.ts";
+export { createPluginLogger } from "./src/logger.ts";
+export type { PluginLogLevel } from "./src/logger.ts";
 export { parseConfig } from "./src/config.ts";
 export { shouldCapture, detectCategory } from "./src/auto-capture.ts";
 export { parseYamlFrontmatter, inferCategory, extractHeaders } from "./src/metadata.ts";
