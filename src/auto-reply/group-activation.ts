@@ -34,7 +34,7 @@ export function parseActivationCommand(raw?: string): {
     return { hasCommand: false };
   }
   const normalized = normalizeCommandBody(trimmed);
-  const match = normalized.match(/^\/activation(?:\s+([a-zA-Z]+))?\s*$/i);
+  const match = normalized.match(/^\/activation(?:\s+([a-zA-Z+]+))?\s*$/i);
   if (!match) {
     return { hasCommand: false };
   }
