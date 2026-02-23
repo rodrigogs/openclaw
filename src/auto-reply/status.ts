@@ -75,7 +75,7 @@ type StatusArgs = {
   parentSessionKey?: string;
   sessionScope?: SessionScope;
   sessionStorePath?: string;
-  groupActivation?: "mention" | "always";
+  groupActivation?: "mention" | "always" | "replies" | "mention+replies" | "never";
   resolvedThink?: ThinkLevel;
   resolvedVerbose?: VerboseLevel;
   resolvedReasoning?: ReasoningLevel;
